@@ -11,7 +11,7 @@
  *  - dlink-switch-summary-card   glance-style summary of the whole switch
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.3.0";
 
 const DEFAULT_CONNECTED_STATES = ["on", "connected", "verbunden", "up", "true"];
 
@@ -76,6 +76,70 @@ function resolvePorts(config) {
     });
   }
   return ports;
+}
+
+function extractPortNumber(text) {
+  if (!text) return null;
+  const match = /port[\s_-]*(\d{1,2})\b/i.exec(text);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function classifyEntitySignal(entityId, name) {
+  const lower = `${name || ""} ${entityId}`.toLowerCase();
+  const isBinary = entityId.startsWith("binary_sensor.");
+
+  if (isBinary && (lower.includes("link") || lower.includes("verbind") || lower.includes("connect"))) {
+    return "link";
+  }
+  if (lower.includes("speed") || lower.includes("geschwindigkeit")) {
+    return "speed";
+  }
+  const isTraffic = lower.includes("traffic") || lower.includes("datenverkehr");
+  if (
+    isTraffic &&
+    (lower.includes(" in") || lower.includes("eingehend") || lower.includes("empfangen") || lower.includes("rx") || lower.endsWith("_in"))
+  ) {
+    return "traffic_in";
+  }
+  if (
+    isTraffic &&
+    (lower.includes(" out") || lower.includes("ausgehend") || lower.includes("gesendet") || lower.includes("tx") || lower.endsWith("_out"))
+  ) {
+    return "traffic_out";
+  }
+  if (
+    lower.includes("poe") &&
+    (lower.includes("leistung") || lower.includes("power") || lower.includes("verbrauch") || lower.includes("consumption") || lower.includes("watt"))
+  ) {
+    return "poe";
+  }
+  return null;
+}
+
+function detectPortsFromDevice(hass, deviceId) {
+  const result = { poe_entity: undefined, ports: {} };
+  if (!hass || !hass.entities || !deviceId) return result;
+  for (const entry of Object.values(hass.entities)) {
+    if (entry.device_id !== deviceId) continue;
+    const entityId = entry.entity_id;
+    const stateObj = hass.states[entityId];
+    const name =
+      (stateObj && stateObj.attributes && stateObj.attributes.friendly_name) ||
+      entry.name ||
+      entry.original_name ||
+      entityId;
+    const signal = classifyEntitySignal(entityId, name);
+    if (!signal) continue;
+    if (signal === "poe") {
+      result.poe_entity = entityId;
+      continue;
+    }
+    const portNum = extractPortNumber(name) || extractPortNumber(entityId);
+    if (!portNum) continue;
+    if (!result.ports[portNum]) result.ports[portNum] = {};
+    result.ports[portNum][signal] = entityId;
+  }
+  return result;
 }
 
 function validatePortsConfig(config) {
@@ -906,6 +970,7 @@ class DlinkPortCardEditor extends BaseFormEditor {
 class DlinkTemplatedPortsEditor extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
+    if (this._lastDeviceId === undefined) this._lastDeviceId = this._config.device_id;
     this._render();
   }
 
@@ -922,7 +987,10 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
 
   get schema() {
     const count = this.portCount;
-    const schema = [{ name: "title", selector: { text: {} } }];
+    const schema = [
+      { name: "device_id", selector: { device: {} } },
+      { name: "title", selector: { text: {} } },
+    ];
     if (this.showPoe) {
       schema.push({ name: "poe_entity", selector: { entity: { domain: "sensor" } } });
     }
@@ -943,6 +1011,7 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
   }
 
   _labelFor(name) {
+    if (name === "device_id") return "Gerät (füllt Ports automatisch aus)";
     if (name === "title") return "Titel";
     if (name === "poe_entity") return "PoE-Leistungssensor";
     if (name === "port_count") return "Anzahl Ports";
@@ -972,6 +1041,7 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
   _toFormData() {
     const config = this._config || {};
     const data = {
+      device_id: config.device_id,
       title: config.title,
       poe_entity: config.poe_entity,
       port_count: this.portCount,
@@ -989,6 +1059,7 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
 
   _fromFormData(data) {
     const newConfig = { ...(this._config || {}) };
+    newConfig.device_id = data.device_id;
     newConfig.title = data.title;
     if (this.showPoe) newConfig.poe_entity = data.poe_entity;
     newConfig.port_count = data.port_count;
@@ -1007,6 +1078,39 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
       });
     }
     newConfig.ports = ports;
+
+    if (data.device_id && data.device_id !== this._lastDeviceId) {
+      this._lastDeviceId = data.device_id;
+      const detected = detectPortsFromDevice(this._hass, data.device_id);
+
+      if (this.showPoe && detected.poe_entity && !newConfig.poe_entity) {
+        newConfig.poe_entity = detected.poe_entity;
+      }
+
+      const detectedPortNums = Object.keys(detected.ports).map(Number);
+      if (detectedPortNums.length) {
+        const maxDetected = Math.max(...detectedPortNums);
+        if (maxDetected > newConfig.port_count) newConfig.port_count = maxDetected;
+
+        const merged = [];
+        for (let i = 1; i <= newConfig.port_count; i++) {
+          const existing = newConfig.ports.find((p) => p.port === i) || { port: i, name: `Port ${i}` };
+          const det = detected.ports[i] || {};
+          merged.push({
+            port: i,
+            name: existing.name || `Port ${i}`,
+            link: det.link || existing.link,
+            speed: det.speed || existing.speed,
+            traffic_in: det.traffic_in || existing.traffic_in,
+            traffic_out: det.traffic_out || existing.traffic_out,
+          });
+        }
+        newConfig.ports = merged;
+      }
+    } else if (!data.device_id) {
+      this._lastDeviceId = undefined;
+    }
+
     return newConfig;
   }
 
@@ -1027,7 +1131,13 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
     this._form.schema = this.schema;
     this._form.data = this._toFormData();
     this._form.computeLabel = (s) => this._labelFor(s.name);
-    this._form.computeHelper = (s) => (s.name === "port_count" ? "z.B. 10 bei einer DGS-1210-10P" : "");
+    this._form.computeHelper = (s) => {
+      if (s.name === "device_id") {
+        return "Optional: Gerät der DGS-1210-Integration wählen, dann werden Port-Entitäten anhand von Namen (Portnummer + Link/Speed/Traffic/PoE) automatisch erkannt und eingetragen.";
+      }
+      if (s.name === "port_count") return "z.B. 10 bei einer DGS-1210-10P";
+      return "";
+    };
   }
 }
 

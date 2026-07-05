@@ -40,16 +40,23 @@ Alle fünf Karten haben einen grafischen Editor. So richtest du sie über die Ob
 2. Ganz unten in der Liste nach **„D-Link Switch"** suchen – alle 5 Karten erscheinen dort
    mit Name und Beschreibung.
 3. Karte auswählen → es öffnet sich der Editor mit Eingabefeldern statt YAML.
-4. Felder ausfüllen:
-   - **Anzahl Ports** zuerst setzen (z.B. `10` bei einer DGS-1210-10P) – danach erscheint
-     pro Port ein eigener Block mit Feldern.
-   - Für **jeden Port einzeln**: Name (optional) sowie Link-, Speed- und
-     Traffic-in/-out-Entität über den Entity-Picker auswählen (antippen, tippen zum
-     Suchen). Jeder Port bekommt seine eigenen, unabhängigen Entitäten – kein
-     Namensmuster nötig.
-   - **PoE-Leistungssensor**: ebenfalls per Entity-Picker auswählen (bei Portübersicht
-     und Zusammenfassung).
-5. Speichern – fertig, kein YAML nötig.
+4. Ganz oben **„Gerät"** auswählen: Wähle das HA-Gerät deiner DGS-1210-Integration.
+   Die Karte durchsucht dann automatisch alle Entitäten dieses Geräts, erkennt anhand
+   von Portnummer + Signalart (Link/Speed/Traffic in/out) und PoE im Namen, welche
+   Entität zu welchem Port gehört, und trägt **Anzahl Ports**, alle Port-Entitäten und
+   den PoE-Sensor selbst ein. Das funktioniert zuverlässig, wenn deine Integration
+   Entitäten wie „Port 1 link", „Port 1 speed", „Port 1 traffic in/out" o.ä. benennt.
+5. Ergebnis prüfen und bei Bedarf einzelne Felder manuell korrigieren:
+   - **Anzahl Ports** anpassen, falls falsch erkannt.
+   - Pro Port: Name (optional), Link-, Speed-, Traffic-in/-out-Entität über den
+     Entity-Picker ändern.
+   - **PoE-Leistungssensor**: bei Bedarf manuell überschreiben (bei Portübersicht und
+     Zusammenfassung).
+6. Speichern – fertig, kein YAML nötig.
+
+Wenn die Auto-Erkennung nichts oder etwas Falsches findet (z.B. weil deine Integration
+andere Bezeichnungen verwendet), lässt du das Gerätefeld einfach leer und füllst die
+Port-Felder wie gehabt manuell per Entity-Picker aus.
 
 Erhöhst du **Anzahl Ports** nachträglich, erscheinen unten neue leere Portblöcke zum
 Ausfüllen; bereits ausgefüllte Ports bleiben erhalten.
