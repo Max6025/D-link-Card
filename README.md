@@ -41,20 +41,18 @@ Alle fünf Karten haben einen grafischen Editor. So richtest du sie über die Ob
    mit Name und Beschreibung.
 3. Karte auswählen → es öffnet sich der Editor mit Eingabefeldern statt YAML.
 4. Felder ausfüllen:
-   - **PoE-Leistungssensor** / **Link-/Speed-Entität** etc.: Entity-Picker, einfach die
-     passende Entität deiner Integration auswählen bzw. antippen und suchen.
-   - **Link-Entity-Vorlage** / **Speed-Entity-Vorlage** (bei Portübersicht, Port-Grid,
-     Zusammenfassung): hier `{port}` als Platzhalter für die Portnummer eintragen,
-     z.B. `binary_sensor.dgs1210_port_{port}_link`. Am einfachsten findest du das Muster,
-     indem du dir in **Entwicklerwerkzeuge → Zustände** eine der Port-Entitäten ansiehst.
-   - **Anzahl Ports**: z.B. `10` bei einer DGS-1210-10P.
+   - **Anzahl Ports** zuerst setzen (z.B. `10` bei einer DGS-1210-10P) – danach erscheint
+     pro Port ein eigener Block mit Feldern.
+   - Für **jeden Port einzeln**: Name (optional) sowie Link-, Speed- und
+     Traffic-in/-out-Entität über den Entity-Picker auswählen (antippen, tippen zum
+     Suchen). Jeder Port bekommt seine eigenen, unabhängigen Entitäten – kein
+     Namensmuster nötig.
+   - **PoE-Leistungssensor**: ebenfalls per Entity-Picker auswählen (bei Portübersicht
+     und Zusammenfassung).
 5. Speichern – fertig, kein YAML nötig.
 
-Die Vorlagen-Editoren (Portübersicht, Port-Grid, Zusammenfassung) decken den Standardfall
-ab, bei dem alle Ports demselben Entity-Namensmuster folgen. Wenn deine Ports individuelle
-Namen/Entity-IDs ohne einheitliches Muster haben, wechsle im Karten-Editor oben rechts auf
-**„Als YAML bearbeiten"** und nutze dort eine explizite `ports:`-Liste (siehe Abschnitt
-„Portübersicht" weiter unten).
+Erhöhst du **Anzahl Ports** nachträglich, erscheinen unten neue leere Portblöcke zum
+Ausfüllen; bereits ausgefüllte Ports bleiben erhalten.
 
 ## Voraussetzung
 
@@ -68,23 +66,8 @@ diese einmalig in der Karten-Konfiguration eintragen (siehe unten).
 
 Volle Tabelle wie im bisherigen Dashboard, aber mit Icons/Farben für Link-Status.
 
-Am schnellsten per Entity-Vorlage (`{port}` wird durch die Portnummer ersetzt):
-
-```yaml
-type: custom:dlink-switch-card
-title: DGS-1210-10P
-poe_entity: sensor.dgs1210_poe_power
-port_count: 10
-entities:
-  link: binary_sensor.dgs1210_port_{port}_link
-  speed: sensor.dgs1210_port_{port}_speed
-  traffic_in: sensor.dgs1210_port_{port}_traffic_in
-  traffic_out: sensor.dgs1210_port_{port}_traffic_out
-compact: false   # true = nur Link + Speed, ohne Traffic-Zeilen
-```
-
-Alternativ mit expliziter Liste (wenn die Entity-IDs kein einheitliches Muster haben,
-oder du z.B. eigene Namen pro Port vergeben willst):
+Der grafische Editor (siehe oben) erzeugt automatisch eine explizite `ports:`-Liste,
+in der jeder Port seine eigenen Entitäten hat – kein gemeinsames Namensmuster nötig:
 
 ```yaml
 type: custom:dlink-switch-card
@@ -103,6 +86,22 @@ ports:
     speed: sensor.dgs1210_port_2_speed
     traffic_in: sensor.dgs1210_port_2_traffic_in
     traffic_out: sensor.dgs1210_port_2_traffic_out
+compact: false   # true = nur Link + Speed, ohne Traffic-Zeilen
+```
+
+Alternativ (nur per YAML, nicht über den Editor) geht es auch per Entity-Vorlage, falls
+alle Ports demselben Namensmuster folgen (`{port}` wird durch die Portnummer ersetzt):
+
+```yaml
+type: custom:dlink-switch-card
+title: DGS-1210-10P
+poe_entity: sensor.dgs1210_poe_power
+port_count: 10
+entities:
+  link: binary_sensor.dgs1210_port_{port}_link
+  speed: sensor.dgs1210_port_{port}_speed
+  traffic_in: sensor.dgs1210_port_{port}_traffic_in
+  traffic_out: sensor.dgs1210_port_{port}_traffic_out
 ```
 
 ## 2. Port-Grid — `dlink-ports-grid-card`

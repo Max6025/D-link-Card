@@ -11,7 +11,7 @@
  *  - dlink-switch-summary-card   glance-style summary of the whole switch
  */
 
-const CARD_VERSION = "1.1.1";
+const CARD_VERSION = "1.2.0";
 
 const DEFAULT_CONNECTED_STATES = ["on", "connected", "verbunden", "up", "true"];
 
@@ -81,9 +81,10 @@ function resolvePorts(config) {
 function validatePortsConfig(config) {
   const hasExplicitPorts = Array.isArray(config.ports) && config.ports.length;
   const hasTemplate = config.entities && (config.entities.link || config.entities.speed);
-  if (!hasExplicitPorts && !hasTemplate) {
+  const hasPortCount = typeof config.port_count === "number" && config.port_count > 0;
+  if (!hasExplicitPorts && !hasTemplate && !hasPortCount) {
     throw new Error(
-      "Bitte entweder 'ports' (Liste) oder 'entities' + 'port_count' in der Konfiguration angeben."
+      "Bitte 'port_count' angeben, oder 'ports' (Liste) bzw. 'entities' konfigurieren."
     );
   }
 }
@@ -294,17 +295,8 @@ class DlinkSwitchCard extends HTMLElement {
     return 1 + (this._ports ? this._ports.length * rowsPerPort : 0) / 3;
   }
 
-  static getStubConfig(hass) {
-    return {
-      title: "DGS-1210",
-      port_count: 8,
-      entities: {
-        link: "binary_sensor.dgs1210_port_{port}_link",
-        speed: "sensor.dgs1210_port_{port}_speed",
-        traffic_in: "sensor.dgs1210_port_{port}_traffic_in",
-        traffic_out: "sensor.dgs1210_port_{port}_traffic_out",
-      },
-    };
+  static getStubConfig() {
+    return { title: "DGS-1210", port_count: 8 };
   }
 
   static getConfigElement() {
@@ -805,17 +797,8 @@ class DlinkSwitchSummaryCard extends HTMLElement {
     return 2;
   }
 
-  static getStubConfig(hass) {
-    return {
-      title: "DGS-1210",
-      poe_entity: "sensor.dgs1210_poe_power",
-      port_count: 8,
-      entities: {
-        link: "binary_sensor.dgs1210_port_{port}_link",
-        traffic_in: "sensor.dgs1210_port_{port}_traffic_in",
-        traffic_out: "sensor.dgs1210_port_{port}_traffic_out",
-      },
-    };
+  static getStubConfig() {
+    return { title: "DGS-1210", port_count: 8 };
   }
 
   static getConfigElement() {
@@ -909,8 +892,11 @@ class DlinkPortCardEditor extends BaseFormEditor {
 }
 
 /* ------------------------------------------------------------------ */
-/* ha-form based editor for the "templated ports" cards                */
+/* ha-form based editor for the "per-port" cards                       */
 /* (dlink-switch-card, dlink-ports-grid-card, dlink-switch-summary-card)*/
+/* Renders one entity-picker field per signal (link/speed/traffic) for */
+/* every single port, so every entity can be picked individually       */
+/* instead of relying on an entity-id naming pattern.                  */
 /* Uses ha-form + selectors (like the built-in HA card editors) instead*/
 /* of hand-created ha-entity-picker/ha-textfield elements, since those */
 /* are only guaranteed to be registered/upgraded when loaded through   */
@@ -919,7 +905,7 @@ class DlinkPortCardEditor extends BaseFormEditor {
 /* ------------------------------------------------------------------ */
 class DlinkTemplatedPortsEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { ...config };
+    this._config = config || {};
     this._render();
   }
 
@@ -928,17 +914,27 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
     this._render();
   }
 
+  get portCount() {
+    const config = this._config || {};
+    if (Array.isArray(config.ports) && config.ports.length) return config.ports.length;
+    return config.port_count || 8;
+  }
+
   get schema() {
+    const count = this.portCount;
     const schema = [{ name: "title", selector: { text: {} } }];
     if (this.showPoe) {
       schema.push({ name: "poe_entity", selector: { entity: { domain: "sensor" } } });
     }
     schema.push({ name: "port_count", selector: { number: { mode: "box", min: 1, max: 52 } } });
-    schema.push({ name: "entities_link", selector: { text: {} } });
-    schema.push({ name: "entities_speed", selector: { text: {} } });
-    if (this.showTraffic) {
-      schema.push({ name: "entities_traffic_in", selector: { text: {} } });
-      schema.push({ name: "entities_traffic_out", selector: { text: {} } });
+    for (let i = 1; i <= count; i++) {
+      schema.push({ name: `port_${i}_name`, selector: { text: {} } });
+      schema.push({ name: `port_${i}_link`, selector: { entity: {} } });
+      schema.push({ name: `port_${i}_speed`, selector: { entity: { domain: "sensor" } } });
+      if (this.showTraffic) {
+        schema.push({ name: `port_${i}_traffic_in`, selector: { entity: { domain: "sensor" } } });
+        schema.push({ name: `port_${i}_traffic_out`, selector: { entity: { domain: "sensor" } } });
+      }
     }
     if (this.showCompact) {
       schema.push({ name: "compact", selector: { boolean: {} } });
@@ -946,57 +942,71 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
     return schema;
   }
 
-  get labels() {
-    return {
-      title: "Titel",
-      poe_entity: "PoE-Leistungssensor",
-      port_count: "Anzahl Ports",
-      entities_link: "Link-Entity-Vorlage",
-      entities_speed: "Speed-Entity-Vorlage",
-      entities_traffic_in: "Traffic-in-Entity-Vorlage",
-      entities_traffic_out: "Traffic-out-Entity-Vorlage",
-      compact: "Kompakt (ohne Traffic-Zeilen)",
-    };
+  _labelFor(name) {
+    if (name === "title") return "Titel";
+    if (name === "poe_entity") return "PoE-Leistungssensor";
+    if (name === "port_count") return "Anzahl Ports";
+    if (name === "compact") return "Kompakt (ohne Traffic-Zeilen)";
+    const match = /^port_(\d+)_(.+)$/.exec(name);
+    if (match) {
+      const [, num, field] = match;
+      const fieldLabels = {
+        name: "Name",
+        link: "Link-Entität",
+        speed: "Speed-Entität",
+        traffic_in: "Traffic-eingehend-Entität",
+        traffic_out: "Traffic-ausgehend-Entität",
+      };
+      return `Port ${num} – ${fieldLabels[field] || field}`;
+    }
+    return name;
   }
 
-  get helpers() {
-    return {
-      port_count: "z.B. 10 bei einer DGS-1210-10P",
-      entities_link:
-        "{port} wird durch die Portnummer ersetzt, z.B. binary_sensor.dgs1210_port_{port}_link",
-      entities_speed: "z.B. sensor.dgs1210_port_{port}_speed",
-      entities_traffic_in: "z.B. sensor.dgs1210_port_{port}_traffic_in",
-      entities_traffic_out: "z.B. sensor.dgs1210_port_{port}_traffic_out",
-    };
+  _resolvedPorts() {
+    const config = this._config || {};
+    if (Array.isArray(config.ports) && config.ports.length) return config.ports;
+    if (config.entities) return resolvePorts(config);
+    return [];
   }
 
-  _toFormData(config) {
-    const entities = config.entities || {};
-    return {
+  _toFormData() {
+    const config = this._config || {};
+    const data = {
       title: config.title,
       poe_entity: config.poe_entity,
-      port_count: config.port_count,
-      entities_link: entities.link,
-      entities_speed: entities.speed,
-      entities_traffic_in: entities.traffic_in,
-      entities_traffic_out: entities.traffic_out,
+      port_count: this.portCount,
       compact: config.compact,
     };
+    for (const port of this._resolvedPorts()) {
+      data[`port_${port.port}_name`] = port.name;
+      data[`port_${port.port}_link`] = port.link;
+      data[`port_${port.port}_speed`] = port.speed;
+      data[`port_${port.port}_traffic_in`] = port.traffic_in;
+      data[`port_${port.port}_traffic_out`] = port.traffic_out;
+    }
+    return data;
   }
 
   _fromFormData(data) {
-    const newConfig = { ...this._config };
+    const newConfig = { ...(this._config || {}) };
     newConfig.title = data.title;
     if (this.showPoe) newConfig.poe_entity = data.poe_entity;
     newConfig.port_count = data.port_count;
-    newConfig.entities = { ...(newConfig.entities || {}) };
-    newConfig.entities.link = data.entities_link;
-    newConfig.entities.speed = data.entities_speed;
-    if (this.showTraffic) {
-      newConfig.entities.traffic_in = data.entities_traffic_in;
-      newConfig.entities.traffic_out = data.entities_traffic_out;
-    }
     if (this.showCompact) newConfig.compact = data.compact;
+    delete newConfig.entities;
+
+    const ports = [];
+    for (let i = 1; i <= data.port_count; i++) {
+      ports.push({
+        port: i,
+        name: data[`port_${i}_name`] || `Port ${i}`,
+        link: data[`port_${i}_link`],
+        speed: data[`port_${i}_speed`],
+        traffic_in: data[`port_${i}_traffic_in`],
+        traffic_out: data[`port_${i}_traffic_out`],
+      });
+    }
+    newConfig.ports = ports;
     return newConfig;
   }
 
@@ -1015,9 +1025,9 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
     }
     this._form.hass = this._hass;
     this._form.schema = this.schema;
-    this._form.data = this._toFormData(this._config);
-    this._form.computeLabel = (s) => this.labels[s.name] || s.name;
-    this._form.computeHelper = (s) => this.helpers[s.name] || "";
+    this._form.data = this._toFormData();
+    this._form.computeLabel = (s) => this._labelFor(s.name);
+    this._form.computeHelper = (s) => (s.name === "port_count" ? "z.B. 10 bei einer DGS-1210-10P" : "");
   }
 }
 
