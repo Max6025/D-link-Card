@@ -1,21 +1,24 @@
 /*
  * D-Link DGS-1210 Switch Cards for Home Assistant
- * A collection of custom Lovelace cards, styled in the spirit of Mushroom
- * (rounded icon containers with a tinted accent color, primary/secondary
- * text, soft hover states), for visualizing data provided by a DGS-1210
- * switch integration (link status, speed, traffic, PoE consumption).
+ * A collection of custom Lovelace cards for visualizing data provided by a
+ * DGS-1210 switch integration (link status, speed, traffic, PoE consumption).
+ *
+ * Every card supports a "theme" option (selectable per-card in the visual
+ * editor): mushroom (default), vanilla, minimal, glass, or custom (exposes
+ * its own radius/color fields in the editor, only shown once selected).
  *
  * Cards provided:
+ *  - dlink-header-card           hero header for a switch dashboard/view
  *  - dlink-switch-card           full port table (all ports, all details)
  *  - dlink-ports-grid-card       compact chip row of all ports
  *  - dlink-port-card             detail card for a single port
  *  - dlink-poe-card              PoE power consumption card with usage bar
- *  - dlink-switch-summary-card   glance-style summary of the whole switch
- *  - dlink-header-card           hero header for a switch dashboard/view
  *  - dlink-traffic-card          total traffic in/out across all ports
+ *  - dlink-stats-card            gauges (port + PoE utilization) + traffic stats
+ *  - dlink-switch-summary-card   glance-style summary of the whole switch
  */
 
-const CARD_VERSION = "2.0.0";
+const CARD_VERSION = "3.0.0";
 
 const DEFAULT_CONNECTED_STATES = ["on", "connected", "verbunden", "up", "true"];
 
@@ -29,8 +32,9 @@ const COLOR_RGB = {
   red: "244,67,54",
 };
 
-function setIconColor(el, colorKey) {
-  const rgb = COLOR_RGB[colorKey] || COLOR_RGB.blue;
+function setIconColor(el, colorKey, colors) {
+  const map = colors || COLOR_RGB;
+  const rgb = map[colorKey] || map.blue || COLOR_RGB.blue;
   el.style.setProperty("--dlink-icon-bg", `rgba(${rgb}, 0.16)`);
   el.style.setProperty("--dlink-icon-color", `rgb(${rgb})`);
 }
@@ -69,6 +73,10 @@ function numericValue(stateObj) {
   if (!stateObj) return null;
   const n = parseFloat(stateObj.state);
   return Number.isNaN(n) ? null : n;
+}
+
+function numOr(value, fallback) {
+  return typeof value === "number" && !Number.isNaN(value) ? value : fallback;
 }
 
 function resolvePorts(config) {
@@ -208,8 +216,155 @@ function sumPortTraffic(hass, ports) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Theme system: every card resolves a "theme" (mushroom/vanilla/      */
+/* minimal/glass/custom) into (a) an accent-color map (colors, changed */
+/* only by "custom") and (b) a CSS string appended after the base      */
+/* (mushroom) styles to restyle the shared building blocks.            */
+/* ------------------------------------------------------------------ */
+const THEME_OPTIONS = [
+  { value: "mushroom", label: "Mushroom" },
+  { value: "vanilla", label: "Vanilla (HA-Standard)" },
+  { value: "minimal", label: "Minimal" },
+  { value: "glass", label: "Glas" },
+  { value: "custom", label: "Benutzerdefiniert" },
+];
+
+const THEME_OVERRIDE_CSS = {
+  mushroom: "",
+  vanilla: `
+    ha-card { padding: 16px; }
+    .dlink-icon-container, .dlink-icon-container-lg {
+      background: transparent !important;
+      border-radius: 0;
+    }
+    .dlink-icon-container ha-icon { --mdc-icon-size: 22px; }
+    .dlink-icon-container-lg ha-icon { --mdc-icon-size: 26px; }
+    .dlink-row {
+      border-radius: 0;
+      border-bottom: 1px solid var(--divider-color, rgba(127, 127, 127, 0.15));
+    }
+    .dlink-row:hover { background-color: transparent; }
+    .dlink-row:last-child { border-bottom: none; }
+    .dlink-chip {
+      border-radius: 8px;
+      background: var(--secondary-background-color, rgba(127, 127, 127, 0.08)) !important;
+    }
+    .dlink-chip-icon { background: transparent !important; border-radius: 0; }
+  `,
+  minimal: `
+    ha-card { padding: 4px 6px; }
+    .dlink-row { padding: 5px 6px; gap: 8px; }
+    .dlink-icon-container, .dlink-icon-container-lg {
+      width: 22px; height: 22px; border-radius: 0; background: transparent !important;
+    }
+    .dlink-icon-container ha-icon, .dlink-icon-container-lg ha-icon { --mdc-icon-size: 18px; }
+    .dlink-primary { font-size: 0.82rem; }
+    .dlink-secondary { font-size: 0.7rem; }
+    .dlink-value { font-size: 0.8rem; }
+    .dlink-port-heading { padding: 8px 6px 0 6px; }
+    .dlink-chip { padding: 3px 8px 3px 3px; background: transparent !important; }
+    .dlink-chip-icon { width: 18px; height: 18px; background: transparent !important; }
+  `,
+  glass: `
+    ha-card { padding: 10px; border-radius: 18px; }
+    .dlink-icon-container, .dlink-icon-container-lg {
+      background: transparent !important;
+      border: 2px solid var(--dlink-icon-color, currentColor);
+    }
+    .dlink-row { border-radius: 14px; }
+    .dlink-chip {
+      background: transparent !important;
+      border: 1.5px solid var(--dlink-icon-color, currentColor);
+    }
+    .dlink-chip-icon { background: transparent !important; }
+  `,
+};
+
+function customThemeCss(config) {
+  const cardRadius = numOr(config.custom_card_radius, 12);
+  const iconRadius = numOr(config.custom_icon_radius, 12);
+  const filled = config.custom_icon_filled !== false;
+  const outlineCss = filled
+    ? ""
+    : `
+      .dlink-icon-container, .dlink-icon-container-lg {
+        background: transparent !important;
+        border: 2px solid var(--dlink-icon-color, currentColor);
+      }
+      .dlink-chip, .dlink-chip-icon { background: transparent !important; }
+      .dlink-chip { border: 1.5px solid var(--dlink-icon-color, currentColor); }
+    `;
+  return `
+    ha-card { border-radius: ${cardRadius}px; }
+    .dlink-icon-container, .dlink-icon-container-lg { border-radius: ${iconRadius}px; }
+    ${outlineCss}
+  `;
+}
+
+function getThemeCss(config) {
+  const theme = (config && config.theme) || "mushroom";
+  if (theme === "custom") return customThemeCss(config || {});
+  return THEME_OVERRIDE_CSS[theme] || "";
+}
+
+function rgbArrToStr(arr, fallback) {
+  return Array.isArray(arr) && arr.length === 3 ? arr.map((n) => Math.round(n)).join(",") : fallback;
+}
+
+function getThemeColors(config) {
+  if (!config || config.theme !== "custom") return COLOR_RGB;
+  return {
+    green: rgbArrToStr(config.custom_color_connected, COLOR_RGB.green),
+    grey: rgbArrToStr(config.custom_color_disconnected, COLOR_RGB.grey),
+    blue: rgbArrToStr(config.custom_color_info, COLOR_RGB.blue),
+    teal: rgbArrToStr(config.custom_color_download, COLOR_RGB.teal),
+    orange: rgbArrToStr(config.custom_color_upload, COLOR_RGB.orange),
+    amber: rgbArrToStr(config.custom_color_warning, COLOR_RGB.amber),
+    red: rgbArrToStr(config.custom_color_critical, COLOR_RGB.red),
+  };
+}
+
+function themeSchemaFields(config) {
+  const fields = [{ name: "theme", selector: { select: { mode: "dropdown", options: THEME_OPTIONS } } }];
+  if ((config || {}).theme === "custom") {
+    fields.push(
+      { name: "custom_card_radius", selector: { number: { mode: "slider", min: 0, max: 28, step: 1 } } },
+      { name: "custom_icon_radius", selector: { number: { mode: "slider", min: 0, max: 24, step: 1 } } },
+      { name: "custom_icon_filled", selector: { boolean: {} } },
+      { name: "custom_color_connected", selector: { color_rgb: {} } },
+      { name: "custom_color_disconnected", selector: { color_rgb: {} } },
+      { name: "custom_color_info", selector: { color_rgb: {} } },
+      { name: "custom_color_download", selector: { color_rgb: {} } },
+      { name: "custom_color_upload", selector: { color_rgb: {} } },
+      { name: "custom_color_warning", selector: { color_rgb: {} } },
+      { name: "custom_color_critical", selector: { color_rgb: {} } }
+    );
+  }
+  return fields;
+}
+
+const THEME_LABELS = {
+  theme: "Design",
+  custom_card_radius: "Eckenradius Karte (px)",
+  custom_icon_radius: "Eckenradius Icon (px)",
+  custom_icon_filled: "Icon-Hintergrund gefüllt",
+  custom_color_connected: "Farbe: Verbunden",
+  custom_color_disconnected: "Farbe: Getrennt",
+  custom_color_info: "Farbe: Speed / Info",
+  custom_color_download: "Farbe: Traffic ein",
+  custom_color_upload: "Farbe: Traffic aus",
+  custom_color_warning: "Farbe: Warnung",
+  custom_color_critical: "Farbe: Kritisch",
+};
+
+const THEME_HELPERS = {
+  theme: 'Bestimmt Form und Farben der Icons. "Benutzerdefiniert" schaltet eigene Einstellungen darunter frei.',
+};
+
+/* ------------------------------------------------------------------ */
 /* Shared "mushroom-ish" building blocks: rounded card, icon container */
-/* with a tinted accent color, primary/secondary text line, soft hover.*/
+/* with a tinted accent color, primary/secondary text line, soft hover,*/
+/* and a simple SVG ring gauge (no dependency on lazily-loaded ha-gauge)*/
 /* ------------------------------------------------------------------ */
 const SHARED_STYLES = `
   ha-card {
@@ -308,9 +463,56 @@ const SHARED_STYLES = `
   .dlink-port-heading:first-of-type {
     padding-top: 6px;
   }
+  .dlink-gauge {
+    position: relative;
+    display: inline-flex;
+  }
+  .dlink-gauge-track {
+    stroke: var(--divider-color, rgba(127, 127, 127, 0.2));
+  }
+  .dlink-gauge-value {
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease;
+  }
+  .dlink-gauge-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+  }
+  .dlink-gauge-value-text {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--primary-text-color);
+  }
+  .dlink-gauge-label-text {
+    font-size: 0.6rem;
+    color: var(--secondary-text-color);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .dlink-stats-gauges {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    padding: 8px 10px 4px 10px;
+  }
+  .dlink-stats-gauge-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .dlink-stats-gauge-caption {
+    font-size: 0.75rem;
+    color: var(--secondary-text-color);
+  }
 `;
 
-function createInfoRow(icon, colorKey) {
+function createInfoRow(icon, colorKey, colors) {
   const row = document.createElement("div");
   row.className = "dlink-row";
   row.innerHTML = `
@@ -326,39 +528,201 @@ function createInfoRow(icon, colorKey) {
   const iconContainer = row.querySelector(".dlink-icon-container");
   const iconEl = row.querySelector("ha-icon");
   iconEl.icon = icon;
-  setIconColor(iconContainer, colorKey || "blue");
+  setIconColor(iconContainer, colorKey || "blue", colors);
   const primaryEl = row.querySelector(".dlink-primary");
   const secondaryEl = row.querySelector(".dlink-secondary");
   const valueEl = row.querySelector(".dlink-value");
   return { row, iconContainer, iconEl, primaryEl, secondaryEl, valueEl };
 }
 
-function updateLinkRow(hass, entry, connectedStates) {
+function updateLinkRow(hass, entry, connectedStates, colors) {
   const { entity, iconEl, iconContainer, valueEl } = entry;
   const stateObj = hass.states[entity];
   if (!stateObj) {
     valueEl.textContent = "nicht gefunden";
     iconEl.icon = "mdi:help-circle-outline";
-    setIconColor(iconContainer, "grey");
+    setIconColor(iconContainer, "grey", colors);
     return;
   }
   const connected = isConnectedState(stateObj, connectedStates);
   valueEl.textContent = formatState(hass, stateObj);
   iconEl.icon = connected ? "mdi:lan-connect" : "mdi:lan-disconnect";
-  setIconColor(iconContainer, connected ? "green" : "grey");
+  setIconColor(iconContainer, connected ? "green" : "grey", colors);
 }
 
-function updateValueRow(hass, entry, icon, colorKey) {
+function updateValueRow(hass, entry, icon, colorKey, colors) {
   const { entity, iconEl, iconContainer, valueEl } = entry;
   const stateObj = hass.states[entity];
   if (!stateObj) {
     valueEl.textContent = "nicht gefunden";
-    setIconColor(iconContainer, "grey");
+    setIconColor(iconContainer, "grey", colors);
     return;
   }
   valueEl.textContent = formatState(hass, stateObj);
   iconEl.icon = icon;
-  setIconColor(iconContainer, colorKey || "blue");
+  setIconColor(iconContainer, colorKey || "blue", colors);
+}
+
+function createGauge(size, strokeWidth) {
+  const s = size || 88;
+  const sw = strokeWidth || 8;
+  const radius = (s - sw) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const wrap = document.createElement("div");
+  wrap.className = "dlink-gauge";
+  wrap.style.width = `${s}px`;
+  wrap.style.height = `${s}px`;
+  wrap.innerHTML = `
+    <svg viewBox="0 0 ${s} ${s}" width="${s}" height="${s}">
+      <circle class="dlink-gauge-track" cx="${s / 2}" cy="${s / 2}" r="${radius}" stroke-width="${sw}" fill="none"></circle>
+      <circle class="dlink-gauge-value" cx="${s / 2}" cy="${s / 2}" r="${radius}" stroke-width="${sw}" fill="none"
+        stroke-dasharray="${circumference}" stroke-dashoffset="${circumference}"
+        transform="rotate(-90 ${s / 2} ${s / 2})"></circle>
+    </svg>
+    <div class="dlink-gauge-center">
+      <span class="dlink-gauge-value-text"></span>
+      <span class="dlink-gauge-label-text"></span>
+    </div>
+  `;
+  const valueCircle = wrap.querySelector(".dlink-gauge-value");
+  const valueTextEl = wrap.querySelector(".dlink-gauge-value-text");
+  const labelTextEl = wrap.querySelector(".dlink-gauge-label-text");
+  return {
+    el: wrap,
+    setPercent(percent, colorRgb) {
+      const clamped = Math.max(0, Math.min(100, percent || 0));
+      const offset = circumference - (clamped / 100) * circumference;
+      valueCircle.style.strokeDashoffset = String(offset);
+      if (colorRgb) valueCircle.style.stroke = `rgb(${colorRgb})`;
+    },
+    setText(value, label) {
+      valueTextEl.textContent = value;
+      labelTextEl.textContent = label || "";
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* dlink-header-card - hero header for a switch dashboard/view         */
+/* ------------------------------------------------------------------ */
+class DlinkHeaderCard extends HTMLElement {
+  setConfig(config) {
+    validatePortsConfig(config);
+    this._config = config;
+    this._ports = resolvePorts(config);
+    this._colors = getThemeColors(config);
+    this._buildDom();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const connectedStates = this._config.connected_states;
+    let connectedCount = 0;
+    let total = 0;
+    for (const port of this._ports) {
+      if (!port.link) continue;
+      total++;
+      const stateObj = hass.states[port.link];
+      if (stateObj && isConnectedState(stateObj, connectedStates)) connectedCount++;
+    }
+
+    let colorKey = total === 0 ? "grey" : connectedCount === total ? "green" : connectedCount === 0 ? "red" : "amber";
+
+    let subtitle = total ? `${connectedCount}/${total} Ports verbunden` : "";
+    if (this._config.poe_entity) {
+      const stateObj = hass.states[this._config.poe_entity];
+      if (stateObj) {
+        subtitle += (subtitle ? " · " : "") + `${formatState(hass, stateObj)} PoE`;
+        const maxPower = this._config.max_power;
+        const value = numericValue(stateObj);
+        if (maxPower && value != null) {
+          const percent = (value / maxPower) * 100;
+          const warn = this._config.warn_percent != null ? this._config.warn_percent : 70;
+          const critical = this._config.critical_percent != null ? this._config.critical_percent : 90;
+          if (percent >= critical) colorKey = "red";
+          else if (percent >= warn && colorKey !== "red") colorKey = "amber";
+        }
+      }
+    }
+
+    this._subtitleEl.textContent = subtitle;
+    setIconColor(this._iconContainer, colorKey, this._colors);
+  }
+
+  _buildDom() {
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = `
+      ${SHARED_STYLES}
+      ha-card {
+        padding: 14px;
+      }
+      .dlink-header-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        cursor: ${this._config.poe_entity ? "pointer" : "default"};
+      }
+      .dlink-header-text {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .dlink-header-title {
+        font-size: 1.1rem;
+        font-weight: 500;
+        color: var(--primary-text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dlink-header-subtitle {
+        font-size: 0.82rem;
+        color: var(--secondary-text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      ${getThemeCss(this._config)}
+    `;
+    root.appendChild(style);
+
+    const card = document.createElement("ha-card");
+    root.appendChild(card);
+
+    const row = document.createElement("div");
+    row.className = "dlink-header-row";
+    row.innerHTML = `
+      <div class="dlink-icon-container-lg"><ha-icon icon="${this._config.icon || "mdi:server-network"}"></ha-icon></div>
+      <div class="dlink-header-text">
+        <span class="dlink-header-title"></span>
+        <span class="dlink-header-subtitle"></span>
+      </div>
+    `;
+    if (this._config.poe_entity) {
+      row.addEventListener("click", () => fireMoreInfo(this, this._config.poe_entity));
+    }
+    card.appendChild(row);
+
+    this._iconContainer = row.querySelector(".dlink-icon-container-lg");
+    row.querySelector(".dlink-header-title").textContent = this._config.title || "DGS-1210";
+    this._subtitleEl = row.querySelector(".dlink-header-subtitle");
+
+    setIconColor(this._iconContainer, "grey", this._colors);
+  }
+
+  getCardSize() {
+    return 1;
+  }
+
+  static getStubConfig() {
+    return { title: "DGS-1210", port_count: 8 };
+  }
+
+  static getConfigElement() {
+    return document.createElement("dlink-header-card-editor");
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -369,6 +733,7 @@ class DlinkSwitchCard extends HTMLElement {
     validatePortsConfig(config);
     this._config = config;
     this._ports = resolvePorts(config);
+    this._colors = getThemeColors(config);
     this._buildDom();
   }
 
@@ -377,13 +742,13 @@ class DlinkSwitchCard extends HTMLElement {
     if (!this._rows) return;
     const connectedStates = this._config.connected_states;
     if (this._poeRow) {
-      updateValueRow(hass, this._poeRow, "mdi:flash", "amber");
+      updateValueRow(hass, this._poeRow, "mdi:flash", "amber", this._colors);
     }
     for (const entry of this._rows) {
-      if (entry.kind === "link") updateLinkRow(hass, entry, connectedStates);
-      else if (entry.kind === "speed") updateValueRow(hass, entry, "mdi:speedometer", "blue");
-      else if (entry.kind === "traffic_in") updateValueRow(hass, entry, "mdi:download-network-outline", "teal");
-      else if (entry.kind === "traffic_out") updateValueRow(hass, entry, "mdi:upload-network-outline", "orange");
+      if (entry.kind === "link") updateLinkRow(hass, entry, connectedStates, this._colors);
+      else if (entry.kind === "speed") updateValueRow(hass, entry, "mdi:speedometer", "blue", this._colors);
+      else if (entry.kind === "traffic_in") updateValueRow(hass, entry, "mdi:download-network-outline", "teal", this._colors);
+      else if (entry.kind === "traffic_out") updateValueRow(hass, entry, "mdi:upload-network-outline", "orange", this._colors);
     }
   }
 
@@ -391,7 +756,7 @@ class DlinkSwitchCard extends HTMLElement {
     const root = this.shadowRoot || this.attachShadow({ mode: "open" });
     root.innerHTML = "";
     const style = document.createElement("style");
-    style.textContent = SHARED_STYLES;
+    style.textContent = SHARED_STYLES + getThemeCss(this._config);
     root.appendChild(style);
 
     const card = document.createElement("ha-card");
@@ -408,7 +773,7 @@ class DlinkSwitchCard extends HTMLElement {
     this._poeRow = null;
 
     if (this._config.poe_entity && this._config.show_poe !== false) {
-      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:flash", "amber");
+      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:flash", "amber", this._colors);
       primaryEl.textContent = "PoE-Leistungsverbrauch";
       row.addEventListener("click", () => fireMoreInfo(this, this._config.poe_entity));
       card.appendChild(row);
@@ -424,28 +789,28 @@ class DlinkSwitchCard extends HTMLElement {
       card.appendChild(heading);
 
       if (port.link) {
-        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:lan-connect", "grey");
+        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:lan-connect", "grey", this._colors);
         primaryEl.textContent = "Link";
         row.addEventListener("click", () => fireMoreInfo(this, port.link));
         card.appendChild(row);
         this._rows.push({ entity: port.link, kind: "link", iconEl, iconContainer, valueEl });
       }
       if (port.speed) {
-        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:speedometer", "blue");
+        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:speedometer", "blue", this._colors);
         primaryEl.textContent = "Speed";
         row.addEventListener("click", () => fireMoreInfo(this, port.speed));
         card.appendChild(row);
         this._rows.push({ entity: port.speed, kind: "speed", iconEl, iconContainer, valueEl });
       }
       if (!compact && port.traffic_in) {
-        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:download-network-outline", "teal");
+        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:download-network-outline", "teal", this._colors);
         primaryEl.textContent = "Traffic ein";
         row.addEventListener("click", () => fireMoreInfo(this, port.traffic_in));
         card.appendChild(row);
         this._rows.push({ entity: port.traffic_in, kind: "traffic_in", iconEl, iconContainer, valueEl });
       }
       if (!compact && port.traffic_out) {
-        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:upload-network-outline", "orange");
+        const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:upload-network-outline", "orange", this._colors);
         primaryEl.textContent = "Traffic aus";
         row.addEventListener("click", () => fireMoreInfo(this, port.traffic_out));
         card.appendChild(row);
@@ -476,6 +841,7 @@ class DlinkPortsGridCard extends HTMLElement {
     validatePortsConfig(config);
     this._config = config;
     this._ports = resolvePorts(config);
+    this._colors = getThemeColors(config);
     this._buildDom();
   }
 
@@ -488,7 +854,7 @@ class DlinkPortsGridCard extends HTMLElement {
       const speedState = chip.speed ? hass.states[chip.speed] : null;
       const connected = linkState ? isConnectedState(linkState, connectedStates) : null;
 
-      setIconColor(chip.el, connected ? "green" : "grey");
+      setIconColor(chip.el, connected ? "green" : "grey", this._colors);
       chip.iconEl.icon = connected ? "mdi:lan-connect" : "mdi:lan-disconnect";
       chip.speedEl.textContent = speedState ? formatState(hass, speedState) : "";
     }
@@ -550,6 +916,7 @@ class DlinkPortsGridCard extends HTMLElement {
         color: var(--primary-text-color);
         min-height: 1em;
       }
+      ${getThemeCss(this._config)}
     `;
     root.appendChild(style);
 
@@ -612,23 +979,24 @@ class DlinkPortCard extends HTMLElement {
       throw new Error("Bitte mindestens eine Entität (link, speed, traffic_in oder traffic_out) angeben.");
     }
     this._config = config;
+    this._colors = getThemeColors(config);
     this._buildDom();
   }
 
   set hass(hass) {
     this._hass = hass;
     const connectedStates = this._config.connected_states;
-    if (this._linkEntry) updateLinkRow(hass, this._linkEntry, connectedStates);
-    if (this._speedEntry) updateValueRow(hass, this._speedEntry, "mdi:speedometer", "blue");
-    if (this._inEntry) updateValueRow(hass, this._inEntry, "mdi:download-network-outline", "teal");
-    if (this._outEntry) updateValueRow(hass, this._outEntry, "mdi:upload-network-outline", "orange");
+    if (this._linkEntry) updateLinkRow(hass, this._linkEntry, connectedStates, this._colors);
+    if (this._speedEntry) updateValueRow(hass, this._speedEntry, "mdi:speedometer", "blue", this._colors);
+    if (this._inEntry) updateValueRow(hass, this._inEntry, "mdi:download-network-outline", "teal", this._colors);
+    if (this._outEntry) updateValueRow(hass, this._outEntry, "mdi:upload-network-outline", "orange", this._colors);
   }
 
   _buildDom() {
     const root = this.shadowRoot || this.attachShadow({ mode: "open" });
     root.innerHTML = "";
     const style = document.createElement("style");
-    style.textContent = SHARED_STYLES;
+    style.textContent = SHARED_STYLES + getThemeCss(this._config);
     root.appendChild(style);
 
     const card = document.createElement("ha-card");
@@ -645,28 +1013,28 @@ class DlinkPortCard extends HTMLElement {
     this._outEntry = null;
 
     if (this._config.link) {
-      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:lan-connect", "grey");
+      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:lan-connect", "grey", this._colors);
       primaryEl.textContent = "Verbindung";
       row.addEventListener("click", () => fireMoreInfo(this, this._config.link));
       card.appendChild(row);
       this._linkEntry = { entity: this._config.link, iconEl, iconContainer, valueEl };
     }
     if (this._config.speed) {
-      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:speedometer", "blue");
+      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:speedometer", "blue", this._colors);
       primaryEl.textContent = "Geschwindigkeit";
       row.addEventListener("click", () => fireMoreInfo(this, this._config.speed));
       card.appendChild(row);
       this._speedEntry = { entity: this._config.speed, iconEl, iconContainer, valueEl };
     }
     if (this._config.traffic_in) {
-      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:download-network-outline", "teal");
+      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:download-network-outline", "teal", this._colors);
       primaryEl.textContent = "Traffic eingehend";
       row.addEventListener("click", () => fireMoreInfo(this, this._config.traffic_in));
       card.appendChild(row);
       this._inEntry = { entity: this._config.traffic_in, iconEl, iconContainer, valueEl };
     }
     if (this._config.traffic_out) {
-      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:upload-network-outline", "orange");
+      const { row, iconEl, iconContainer, primaryEl, valueEl } = createInfoRow("mdi:upload-network-outline", "orange", this._colors);
       primaryEl.textContent = "Traffic ausgehend";
       row.addEventListener("click", () => fireMoreInfo(this, this._config.traffic_out));
       card.appendChild(row);
@@ -702,6 +1070,7 @@ class DlinkPoeCard extends HTMLElement {
       throw new Error("Bitte 'entity' (PoE-Leistungssensor) angeben.");
     }
     this._config = config;
+    this._colors = getThemeColors(config);
     this._buildDom();
   }
 
@@ -710,7 +1079,7 @@ class DlinkPoeCard extends HTMLElement {
     const stateObj = hass.states[this._config.entity];
     if (!stateObj) {
       this._valueEl.textContent = "nicht gefunden";
-      setIconColor(this._iconContainer, "grey");
+      setIconColor(this._iconContainer, "grey", this._colors);
       return;
     }
     const value = numericValue(stateObj);
@@ -723,24 +1092,18 @@ class DlinkPoeCard extends HTMLElement {
       const percent = Math.max(0, Math.min(100, (value / maxPower) * 100));
       const warn = this._config.warn_percent != null ? this._config.warn_percent : 70;
       const critical = this._config.critical_percent != null ? this._config.critical_percent : 90;
-      let barColor = "var(--success-color, #43a047)";
       colorKey = "green";
-      if (percent >= critical) {
-        barColor = "var(--error-color, #e53935)";
-        colorKey = "red";
-      } else if (percent >= warn) {
-        barColor = "var(--warning-color, #fb8c00)";
-        colorKey = "amber";
-      }
+      if (percent >= critical) colorKey = "red";
+      else if (percent >= warn) colorKey = "amber";
       this._barFill.style.width = `${percent}%`;
-      this._barFill.style.background = barColor;
+      this._barFill.style.background = `rgb(${this._colors[colorKey]})`;
       this._barWrap.style.display = "block";
       this._percentEl.textContent = `${percent.toFixed(0)}% von ${maxPower} ${unit}`;
     } else {
       this._barWrap.style.display = "none";
       this._percentEl.textContent = "";
     }
-    setIconColor(this._iconContainer, colorKey);
+    setIconColor(this._iconContainer, colorKey, this._colors);
   }
 
   _buildDom() {
@@ -793,6 +1156,7 @@ class DlinkPoeCard extends HTMLElement {
         font-size: 0.78rem;
         color: var(--secondary-text-color);
       }
+      ${getThemeCss(this._config)}
     `;
     root.appendChild(style);
 
@@ -825,7 +1189,7 @@ class DlinkPoeCard extends HTMLElement {
     this._percentEl.className = "dlink-poe-percent";
     card.appendChild(this._percentEl);
 
-    setIconColor(this._iconContainer, "amber");
+    setIconColor(this._iconContainer, "amber", this._colors);
   }
 
   getCardSize() {
@@ -846,6 +1210,236 @@ class DlinkPoeCard extends HTMLElement {
 }
 
 /* ------------------------------------------------------------------ */
+/* dlink-traffic-card - total traffic in/out across all ports          */
+/* ------------------------------------------------------------------ */
+class DlinkTrafficCard extends HTMLElement {
+  setConfig(config) {
+    validatePortsConfig(config);
+    this._config = config;
+    this._ports = resolvePorts(config);
+    this._colors = getThemeColors(config);
+    this._buildDom();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const { sumIn, sumOut, unitIn, unitOut } = sumPortTraffic(hass, this._ports);
+    this._inValueEl.textContent = `${sumIn.toFixed(2)} ${unitIn}`.trim();
+    this._outValueEl.textContent = `${sumOut.toFixed(2)} ${unitOut}`.trim();
+  }
+
+  _buildDom() {
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = `
+      ${SHARED_STYLES}
+      ha-card {
+        padding: 14px;
+      }
+      .dlink-traffic-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding-top: 4px;
+      }
+      .dlink-traffic-col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        text-align: center;
+      }
+      .dlink-traffic-value {
+        font-size: 1.15rem;
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+      .dlink-traffic-label {
+        font-size: 0.75rem;
+        color: var(--secondary-text-color);
+      }
+      ${getThemeCss(this._config)}
+    `;
+    root.appendChild(style);
+
+    const card = document.createElement("ha-card");
+    root.appendChild(card);
+
+    if (this._config.title) {
+      const title = document.createElement("div");
+      title.className = "dlink-title";
+      title.textContent = this._config.title;
+      card.appendChild(title);
+    }
+
+    const grid = document.createElement("div");
+    grid.className = "dlink-traffic-grid";
+    grid.innerHTML = `
+      <div class="dlink-traffic-col">
+        <div class="dlink-icon-container-lg"><ha-icon icon="mdi:download-network-outline"></ha-icon></div>
+        <span class="dlink-traffic-value"></span>
+        <span class="dlink-traffic-label">Eingehend gesamt</span>
+      </div>
+      <div class="dlink-traffic-col">
+        <div class="dlink-icon-container-lg"><ha-icon icon="mdi:upload-network-outline"></ha-icon></div>
+        <span class="dlink-traffic-value"></span>
+        <span class="dlink-traffic-label">Ausgehend gesamt</span>
+      </div>
+    `;
+    card.appendChild(grid);
+
+    const [inCol, outCol] = grid.querySelectorAll(".dlink-traffic-col");
+    setIconColor(inCol.querySelector(".dlink-icon-container-lg"), "teal", this._colors);
+    setIconColor(outCol.querySelector(".dlink-icon-container-lg"), "orange", this._colors);
+    this._inValueEl = inCol.querySelector(".dlink-traffic-value");
+    this._outValueEl = outCol.querySelector(".dlink-traffic-value");
+  }
+
+  getCardSize() {
+    return 2;
+  }
+
+  static getStubConfig() {
+    return { title: "DGS-1210 Traffic", port_count: 8 };
+  }
+
+  static getConfigElement() {
+    return document.createElement("dlink-traffic-card-editor");
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* dlink-stats-card - gauges (port + PoE utilization) + traffic stats  */
+/* ------------------------------------------------------------------ */
+class DlinkStatsCard extends HTMLElement {
+  setConfig(config) {
+    validatePortsConfig(config);
+    this._config = config;
+    this._ports = resolvePorts(config);
+    this._colors = getThemeColors(config);
+    this._buildDom();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const { connectedCount, total, sumIn, sumOut, unitIn, unitOut } = sumPortTraffic(hass, this._ports);
+
+    const portPercent = total ? (connectedCount / total) * 100 : 0;
+    const portColorKey = total === 0 ? "grey" : connectedCount === total ? "green" : connectedCount === 0 ? "red" : "amber";
+    this._portsGauge.setPercent(portPercent, this._colors[portColorKey] || this._colors.blue);
+    this._portsGauge.setText(`${connectedCount}/${total}`, "Ports");
+
+    if (this._poeGauge && this._config.poe_entity) {
+      const stateObj = hass.states[this._config.poe_entity];
+      const value = numericValue(stateObj);
+      const maxPower = this._config.max_power;
+      if (stateObj && maxPower && value != null) {
+        const percent = Math.max(0, Math.min(100, (value / maxPower) * 100));
+        const warn = this._config.warn_percent != null ? this._config.warn_percent : 70;
+        const critical = this._config.critical_percent != null ? this._config.critical_percent : 90;
+        let colorKey = "green";
+        if (percent >= critical) colorKey = "red";
+        else if (percent >= warn) colorKey = "amber";
+        this._poeGauge.setPercent(percent, this._colors[colorKey]);
+        this._poeGauge.setText(formatState(hass, stateObj), "PoE");
+      }
+    }
+
+    if (this._poeRow) {
+      updateValueRow(hass, this._poeRow, "mdi:flash", "amber", this._colors);
+    }
+
+    this._inValueEl.textContent = `${sumIn.toFixed(2)} ${unitIn}`.trim();
+    this._outValueEl.textContent = `${sumOut.toFixed(2)} ${unitOut}`.trim();
+  }
+
+  _buildDom() {
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = `
+      ${SHARED_STYLES}
+      ha-card { padding: 12px; }
+      ${getThemeCss(this._config)}
+    `;
+    root.appendChild(style);
+
+    const card = document.createElement("ha-card");
+    root.appendChild(card);
+
+    if (this._config.title) {
+      const title = document.createElement("div");
+      title.className = "dlink-title";
+      title.textContent = this._config.title;
+      card.appendChild(title);
+    }
+
+    const gaugesWrap = document.createElement("div");
+    gaugesWrap.className = "dlink-stats-gauges";
+    card.appendChild(gaugesWrap);
+
+    const portsCol = document.createElement("div");
+    portsCol.className = "dlink-stats-gauge-col";
+    this._portsGauge = createGauge(84, 8);
+    portsCol.appendChild(this._portsGauge.el);
+    const portsCaption = document.createElement("span");
+    portsCaption.className = "dlink-stats-gauge-caption";
+    portsCaption.textContent = "Portauslastung";
+    portsCol.appendChild(portsCaption);
+    gaugesWrap.appendChild(portsCol);
+
+    if (this._config.poe_entity && this._config.max_power) {
+      const poeCol = document.createElement("div");
+      poeCol.className = "dlink-stats-gauge-col";
+      this._poeGauge = createGauge(84, 8);
+      poeCol.appendChild(this._poeGauge.el);
+      const poeCaption = document.createElement("span");
+      poeCaption.className = "dlink-stats-gauge-caption";
+      poeCaption.textContent = "PoE-Auslastung";
+      poeCol.appendChild(poeCaption);
+      gaugesWrap.appendChild(poeCol);
+    }
+
+    const inRow = createInfoRow("mdi:download-network-outline", "teal", this._colors);
+    inRow.primaryEl.textContent = "Traffic ein gesamt";
+    card.appendChild(inRow.row);
+    this._inValueEl = inRow.valueEl;
+
+    const outRow = createInfoRow("mdi:upload-network-outline", "orange", this._colors);
+    outRow.primaryEl.textContent = "Traffic aus gesamt";
+    card.appendChild(outRow.row);
+    this._outValueEl = outRow.valueEl;
+
+    this._poeRow = null;
+    if (this._config.poe_entity && !this._config.max_power) {
+      const poeRow = createInfoRow("mdi:flash", "amber", this._colors);
+      poeRow.primaryEl.textContent = "PoE-Leistungsverbrauch";
+      poeRow.row.addEventListener("click", () => fireMoreInfo(this, this._config.poe_entity));
+      card.appendChild(poeRow.row);
+      this._poeRow = {
+        entity: this._config.poe_entity,
+        iconEl: poeRow.iconEl,
+        iconContainer: poeRow.iconContainer,
+        valueEl: poeRow.valueEl,
+      };
+    }
+  }
+
+  getCardSize() {
+    return 3;
+  }
+
+  static getStubConfig() {
+    return { title: "DGS-1210 Statistik", port_count: 8 };
+  }
+
+  static getConfigElement() {
+    return document.createElement("dlink-stats-card-editor");
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* dlink-switch-summary-card - glance-style overview                   */
 /* ------------------------------------------------------------------ */
 class DlinkSwitchSummaryCard extends HTMLElement {
@@ -853,6 +1447,7 @@ class DlinkSwitchSummaryCard extends HTMLElement {
     validatePortsConfig(config);
     this._config = config;
     this._ports = resolvePorts(config);
+    this._colors = getThemeColors(config);
     this._buildDom();
   }
 
@@ -891,7 +1486,11 @@ class DlinkSwitchSummaryCard extends HTMLElement {
     }
 
     this._portsValueEl.textContent = `${connectedCount}/${total}`;
-    setIconColor(this._portsIconContainer, total === 0 ? "grey" : connectedCount === total ? "green" : connectedCount === 0 ? "red" : "amber");
+    setIconColor(
+      this._portsIconContainer,
+      total === 0 ? "grey" : connectedCount === total ? "green" : connectedCount === 0 ? "red" : "amber",
+      this._colors
+    );
 
     this._inValueEl.textContent = `${sumIn.toFixed(2)} ${unitIn}`.trim();
     this._outValueEl.textContent = `${sumOut.toFixed(2)} ${unitOut}`.trim();
@@ -939,6 +1538,7 @@ class DlinkSwitchSummaryCard extends HTMLElement {
         color: var(--secondary-text-color);
         text-align: center;
       }
+      ${getThemeCss(this._config)}
     `;
     root.appendChild(style);
 
@@ -973,16 +1573,16 @@ class DlinkSwitchSummaryCard extends HTMLElement {
     this._portsValueEl = portsTile.querySelector(".dlink-summary-value");
 
     const inTile = makeTile("mdi:download-network-outline", "Traffic ein");
-    setIconColor(inTile.querySelector(".dlink-icon-container"), "teal");
+    setIconColor(inTile.querySelector(".dlink-icon-container"), "teal", this._colors);
     this._inValueEl = inTile.querySelector(".dlink-summary-value");
 
     const outTile = makeTile("mdi:upload-network-outline", "Traffic aus");
-    setIconColor(outTile.querySelector(".dlink-icon-container"), "orange");
+    setIconColor(outTile.querySelector(".dlink-icon-container"), "orange", this._colors);
     this._outValueEl = outTile.querySelector(".dlink-summary-value");
 
     if (this._config.poe_entity) {
       const poeTile = makeTile("mdi:flash", "PoE");
-      setIconColor(poeTile.querySelector(".dlink-icon-container"), "amber");
+      setIconColor(poeTile.querySelector(".dlink-icon-container"), "amber", this._colors);
       poeTile.addEventListener("click", () => fireMoreInfo(this, this._config.poe_entity));
       this._poeValueEl = poeTile.querySelector(".dlink-summary-value");
     }
@@ -1002,226 +1602,7 @@ class DlinkSwitchSummaryCard extends HTMLElement {
 }
 
 /* ------------------------------------------------------------------ */
-/* dlink-header-card - hero header for a switch dashboard/view         */
-/* ------------------------------------------------------------------ */
-class DlinkHeaderCard extends HTMLElement {
-  setConfig(config) {
-    validatePortsConfig(config);
-    this._config = config;
-    this._ports = resolvePorts(config);
-    this._buildDom();
-  }
-
-  set hass(hass) {
-    this._hass = hass;
-    const connectedStates = this._config.connected_states;
-    let connectedCount = 0;
-    let total = 0;
-    for (const port of this._ports) {
-      if (!port.link) continue;
-      total++;
-      const stateObj = hass.states[port.link];
-      if (stateObj && isConnectedState(stateObj, connectedStates)) connectedCount++;
-    }
-
-    let colorKey = total === 0 ? "grey" : connectedCount === total ? "green" : connectedCount === 0 ? "red" : "amber";
-
-    let subtitle = total ? `${connectedCount}/${total} Ports verbunden` : "";
-    if (this._config.poe_entity) {
-      const stateObj = hass.states[this._config.poe_entity];
-      if (stateObj) {
-        subtitle += (subtitle ? " · " : "") + `${formatState(hass, stateObj)} PoE`;
-        const maxPower = this._config.max_power;
-        const value = numericValue(stateObj);
-        if (maxPower && value != null) {
-          const percent = (value / maxPower) * 100;
-          const warn = this._config.warn_percent != null ? this._config.warn_percent : 70;
-          const critical = this._config.critical_percent != null ? this._config.critical_percent : 90;
-          if (percent >= critical) colorKey = "red";
-          else if (percent >= warn && colorKey !== "red") colorKey = "amber";
-        }
-      }
-    }
-
-    this._subtitleEl.textContent = subtitle;
-    setIconColor(this._iconContainer, colorKey);
-  }
-
-  _buildDom() {
-    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
-    root.innerHTML = "";
-    const style = document.createElement("style");
-    style.textContent = `
-      ${SHARED_STYLES}
-      ha-card {
-        padding: 14px;
-      }
-      .dlink-header-row {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        cursor: ${this._config.poe_entity ? "pointer" : "default"};
-      }
-      .dlink-header-text {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-      }
-      .dlink-header-title {
-        font-size: 1.1rem;
-        font-weight: 500;
-        color: var(--primary-text-color);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .dlink-header-subtitle {
-        font-size: 0.82rem;
-        color: var(--secondary-text-color);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-    `;
-    root.appendChild(style);
-
-    const card = document.createElement("ha-card");
-    root.appendChild(card);
-
-    const row = document.createElement("div");
-    row.className = "dlink-header-row";
-    row.innerHTML = `
-      <div class="dlink-icon-container-lg"><ha-icon icon="${this._config.icon || "mdi:server-network"}"></ha-icon></div>
-      <div class="dlink-header-text">
-        <span class="dlink-header-title"></span>
-        <span class="dlink-header-subtitle"></span>
-      </div>
-    `;
-    if (this._config.poe_entity) {
-      row.addEventListener("click", () => fireMoreInfo(this, this._config.poe_entity));
-    }
-    card.appendChild(row);
-
-    this._iconContainer = row.querySelector(".dlink-icon-container-lg");
-    row.querySelector(".dlink-header-title").textContent = this._config.title || "DGS-1210";
-    this._subtitleEl = row.querySelector(".dlink-header-subtitle");
-
-    setIconColor(this._iconContainer, "grey");
-  }
-
-  getCardSize() {
-    return 1;
-  }
-
-  static getStubConfig() {
-    return { title: "DGS-1210", port_count: 8 };
-  }
-
-  static getConfigElement() {
-    return document.createElement("dlink-header-card-editor");
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* dlink-traffic-card - total traffic in/out across all ports          */
-/* ------------------------------------------------------------------ */
-class DlinkTrafficCard extends HTMLElement {
-  setConfig(config) {
-    validatePortsConfig(config);
-    this._config = config;
-    this._ports = resolvePorts(config);
-    this._buildDom();
-  }
-
-  set hass(hass) {
-    this._hass = hass;
-    const { sumIn, sumOut, unitIn, unitOut } = sumPortTraffic(hass, this._ports);
-    this._inValueEl.textContent = `${sumIn.toFixed(2)} ${unitIn}`.trim();
-    this._outValueEl.textContent = `${sumOut.toFixed(2)} ${unitOut}`.trim();
-  }
-
-  _buildDom() {
-    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
-    root.innerHTML = "";
-    const style = document.createElement("style");
-    style.textContent = `
-      ${SHARED_STYLES}
-      ha-card {
-        padding: 14px;
-      }
-      .dlink-traffic-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-        padding-top: 4px;
-      }
-      .dlink-traffic-col {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        text-align: center;
-      }
-      .dlink-traffic-value {
-        font-size: 1.15rem;
-        font-weight: 500;
-        color: var(--primary-text-color);
-      }
-      .dlink-traffic-label {
-        font-size: 0.75rem;
-        color: var(--secondary-text-color);
-      }
-    `;
-    root.appendChild(style);
-
-    const card = document.createElement("ha-card");
-    root.appendChild(card);
-
-    if (this._config.title) {
-      const title = document.createElement("div");
-      title.className = "dlink-title";
-      title.textContent = this._config.title;
-      card.appendChild(title);
-    }
-
-    const grid = document.createElement("div");
-    grid.className = "dlink-traffic-grid";
-    grid.innerHTML = `
-      <div class="dlink-traffic-col">
-        <div class="dlink-icon-container-lg"><ha-icon icon="mdi:download-network-outline"></ha-icon></div>
-        <span class="dlink-traffic-value"></span>
-        <span class="dlink-traffic-label">Eingehend gesamt</span>
-      </div>
-      <div class="dlink-traffic-col">
-        <div class="dlink-icon-container-lg"><ha-icon icon="mdi:upload-network-outline"></ha-icon></div>
-        <span class="dlink-traffic-value"></span>
-        <span class="dlink-traffic-label">Ausgehend gesamt</span>
-      </div>
-    `;
-    card.appendChild(grid);
-
-    const [inCol, outCol] = grid.querySelectorAll(".dlink-traffic-col");
-    setIconColor(inCol.querySelector(".dlink-icon-container-lg"), "teal");
-    setIconColor(outCol.querySelector(".dlink-icon-container-lg"), "orange");
-    this._inValueEl = inCol.querySelector(".dlink-traffic-value");
-    this._outValueEl = outCol.querySelector(".dlink-traffic-value");
-  }
-
-  getCardSize() {
-    return 2;
-  }
-
-  static getStubConfig() {
-    return { title: "DGS-1210 Traffic", port_count: 8 };
-  }
-
-  static getConfigElement() {
-    return document.createElement("dlink-traffic-card-editor");
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Simple ha-form based editors                                        */
+/* Simple ha-form based editors (single-entity cards)                  */
 /* ------------------------------------------------------------------ */
 class BaseFormEditor extends HTMLElement {
   setConfig(config) {
@@ -1238,8 +1619,16 @@ class BaseFormEditor extends HTMLElement {
     return [];
   }
 
+  get fullSchema() {
+    return [...this.schema, ...themeSchemaFields(this._config)];
+  }
+
   computeLabel(schema) {
-    return this.labels && this.labels[schema.name] ? this.labels[schema.name] : schema.name;
+    return (this.labels && this.labels[schema.name]) || THEME_LABELS[schema.name] || schema.name;
+  }
+
+  computeHelper(schema) {
+    return THEME_HELPERS[schema.name] || (this.helpers && this.helpers[schema.name]) || "";
   }
 
   _render() {
@@ -1255,9 +1644,10 @@ class BaseFormEditor extends HTMLElement {
       root.appendChild(this._form);
     }
     this._form.hass = this._hass;
-    this._form.schema = this.schema;
+    this._form.schema = this.fullSchema;
     this._form.data = this._config;
     this._form.computeLabel = this.computeLabel.bind(this);
+    this._form.computeHelper = this.computeHelper.bind(this);
   }
 }
 
@@ -1308,10 +1698,13 @@ class DlinkPortCardEditor extends BaseFormEditor {
 /* ------------------------------------------------------------------ */
 /* ha-form based editor for the "per-port" cards                       */
 /* (dlink-switch-card, dlink-ports-grid-card, dlink-switch-summary-card,*/
-/*  dlink-header-card, dlink-traffic-card)                             */
+/*  dlink-header-card, dlink-traffic-card, dlink-stats-card)           */
 /* Renders one entity-picker field per signal (link/speed/traffic) for */
 /* every single port, so every entity can be picked individually       */
-/* instead of relying on an entity-id naming pattern.                  */
+/* instead of relying on an entity-id naming pattern. Also appends the */
+/* shared theme fields, with the custom-theme fields only appearing    */
+/* once "Benutzerdefiniert" is selected (schema is recomputed from the */
+/* current config on every render).                                   */
 /* Uses ha-form + selectors (like the built-in HA card editors) instead*/
 /* of hand-created ha-entity-picker/ha-textfield elements, since those */
 /* are only guaranteed to be registered/upgraded when loaded through   */
@@ -1363,10 +1756,12 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
     if (this.showCompact) {
       schema.push({ name: "compact", selector: { boolean: {} } });
     }
+    schema.push(...themeSchemaFields(this._config));
     return schema;
   }
 
   _labelFor(name) {
+    if (THEME_LABELS[name]) return THEME_LABELS[name];
     if (name === "device_id") return "Gerät (füllt Ports automatisch aus)";
     if (name === "title") return "Titel";
     if (name === "poe_entity") return "PoE-Leistungssensor";
@@ -1404,6 +1799,17 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
       max_power: config.max_power,
       port_count: this.portCount,
       compact: config.compact,
+      theme: config.theme,
+      custom_card_radius: config.custom_card_radius,
+      custom_icon_radius: config.custom_icon_radius,
+      custom_icon_filled: config.custom_icon_filled,
+      custom_color_connected: config.custom_color_connected,
+      custom_color_disconnected: config.custom_color_disconnected,
+      custom_color_info: config.custom_color_info,
+      custom_color_download: config.custom_color_download,
+      custom_color_upload: config.custom_color_upload,
+      custom_color_warning: config.custom_color_warning,
+      custom_color_critical: config.custom_color_critical,
     };
     for (const port of this._resolvedPorts()) {
       data[`port_${port.port}_name`] = port.name;
@@ -1424,6 +1830,20 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
     newConfig.port_count = data.port_count;
     if (this.showCompact) newConfig.compact = data.compact;
     delete newConfig.entities;
+
+    newConfig.theme = data.theme;
+    if (data.theme === "custom") {
+      newConfig.custom_card_radius = data.custom_card_radius;
+      newConfig.custom_icon_radius = data.custom_icon_radius;
+      newConfig.custom_icon_filled = data.custom_icon_filled;
+      newConfig.custom_color_connected = data.custom_color_connected;
+      newConfig.custom_color_disconnected = data.custom_color_disconnected;
+      newConfig.custom_color_info = data.custom_color_info;
+      newConfig.custom_color_download = data.custom_color_download;
+      newConfig.custom_color_upload = data.custom_color_upload;
+      newConfig.custom_color_warning = data.custom_color_warning;
+      newConfig.custom_color_critical = data.custom_color_critical;
+    }
 
     const ports = [];
     for (let i = 1; i <= data.port_count; i++) {
@@ -1491,6 +1911,7 @@ class DlinkTemplatedPortsEditor extends HTMLElement {
     this._form.data = this._toFormData();
     this._form.computeLabel = (s) => this._labelFor(s.name);
     this._form.computeHelper = (s) => {
+      if (THEME_HELPERS[s.name]) return THEME_HELPERS[s.name];
       if (s.name === "device_id") {
         return "Optional: Gerät der DGS-1210-Integration wählen, dann werden Port-Entitäten anhand von Namen (Portnummer + Link/Speed/Traffic/PoE) automatisch erkannt und eingetragen.";
       }
@@ -1548,6 +1969,16 @@ class DlinkTrafficCardEditor extends DlinkTemplatedPortsEditor {
   }
 }
 
+class DlinkStatsCardEditor extends DlinkTemplatedPortsEditor {
+  constructor() {
+    super();
+    this.showPoe = true;
+    this.showTraffic = true;
+    this.showMaxPower = true;
+    this.showCompact = false;
+  }
+}
+
 customElements.define("dlink-poe-card-editor", DlinkPoeCardEditor);
 customElements.define("dlink-port-card-editor", DlinkPortCardEditor);
 customElements.define("dlink-switch-card-editor", DlinkSwitchCardEditor);
@@ -1555,6 +1986,7 @@ customElements.define("dlink-ports-grid-card-editor", DlinkPortsGridCardEditor);
 customElements.define("dlink-switch-summary-card-editor", DlinkSwitchSummaryCardEditor);
 customElements.define("dlink-header-card-editor", DlinkHeaderCardEditor);
 customElements.define("dlink-traffic-card-editor", DlinkTrafficCardEditor);
+customElements.define("dlink-stats-card-editor", DlinkStatsCardEditor);
 
 customElements.define("dlink-switch-card", DlinkSwitchCard);
 customElements.define("dlink-ports-grid-card", DlinkPortsGridCard);
@@ -1563,6 +1995,7 @@ customElements.define("dlink-poe-card", DlinkPoeCard);
 customElements.define("dlink-switch-summary-card", DlinkSwitchSummaryCard);
 customElements.define("dlink-header-card", DlinkHeaderCard);
 customElements.define("dlink-traffic-card", DlinkTrafficCard);
+customElements.define("dlink-stats-card", DlinkStatsCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -1600,6 +2033,12 @@ window.customCards.push(
     type: "dlink-traffic-card",
     name: "D-Link Switch – Traffic gesamt",
     description: "Summe von eingehendem und ausgehendem Traffic über alle Ports.",
+    preview: false,
+  },
+  {
+    type: "dlink-stats-card",
+    name: "D-Link Switch – Statistik",
+    description: "Gauges für Port- und PoE-Auslastung plus Traffic-Statistik.",
     preview: false,
   },
   {

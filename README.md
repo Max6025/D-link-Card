@@ -3,13 +3,14 @@
 Custom Lovelace-Karten für Home Assistant, um die Daten deiner DGS-1210-Integration
 (Port-Link, Speed, Traffic, PoE-Leistungsverbrauch) übersichtlich darzustellen.
 
-Design im Stil von [Mushroom](https://github.com/piitaya/lovelace-mushroom): abgerundete,
-farblich getönte Icon-Container statt nackter Icons, klare Primär-/Sekundärtext-Zeilen,
-weiche Hover-Flächen statt Trennlinien. Grün = verbunden/gut, Grau = getrennt, Gelb/Rot =
-Warnung/kritisch (z.B. bei PoE-Auslastung).
+Design standardmäßig im Stil von [Mushroom](https://github.com/piitaya/lovelace-mushroom):
+abgerundete, farblich getönte Icon-Container statt nackter Icons, klare
+Primär-/Sekundärtext-Zeilen, weiche Hover-Flächen statt Trennlinien. Grün = verbunden/gut,
+Grau = getrennt, Gelb/Rot = Warnung/kritisch (z.B. bei PoE-Auslastung). Das Design lässt
+sich pro Karte umstellen (siehe Abschnitt "Design/Theme").
 
 Statt einer langen `entities`-Karte mit 40+ Zeilen (Port 1–10 × Link/Speed/Traffic
-in/out) stehen sieben verschiedene, spezialisierte Karten zur Auswahl:
+in/out) stehen acht verschiedene, spezialisierte Karten zur Auswahl:
 
 | Karte | Typ | Wofür |
 |---|---|---|
@@ -19,6 +20,7 @@ in/out) stehen sieben verschiedene, spezialisierte Karten zur Auswahl:
 | Einzelner Port | `dlink-port-card` | Detailkarte für einen wichtigen Port (z.B. Uplink zum Router oder NAS) |
 | PoE-Verbrauch | `dlink-poe-card` | Große Anzeige des PoE-Gesamtverbrauchs mit Auslastungsbalken |
 | Traffic gesamt | `dlink-traffic-card` | Summe von ein-/ausgehendem Traffic über alle Ports, große Zahlen |
+| Statistik | `dlink-stats-card` | Gauges (Ringdiagramme) für Port- und PoE-Auslastung plus Traffic-Statistik |
 | Zusammenfassung | `dlink-switch-summary-card` | Glance-Karte: verbundene Ports, Traffic-Summe, PoE – ideal fürs Haupt-Dashboard |
 
 ## Installation über HACS
@@ -41,10 +43,10 @@ Typ: JavaScript-Modul
 
 ## Einrichtung über die UI (ohne YAML)
 
-Alle fünf Karten haben einen grafischen Editor. So richtest du sie über die Oberfläche ein:
+Alle acht Karten haben einen grafischen Editor. So richtest du sie über die Oberfläche ein:
 
 1. Dashboard bearbeiten (Stift-Symbol oben rechts) → **+ Karte hinzufügen**.
-2. Ganz unten in der Liste nach **„D-Link Switch"** suchen – alle 5 Karten erscheinen dort
+2. Ganz unten in der Liste nach **„D-Link Switch"** suchen – alle 8 Karten erscheinen dort
    mit Name und Beschreibung.
 3. Karte auswählen → es öffnet sich der Editor mit Eingabefeldern statt YAML.
 4. Ganz oben **„Gerät"** auswählen: Wähle das HA-Gerät deiner DGS-1210-Integration.
@@ -67,6 +69,42 @@ Port-Felder wie gehabt manuell per Entity-Picker aus.
 
 Erhöhst du **Anzahl Ports** nachträglich, erscheinen unten neue leere Portblöcke zum
 Ausfüllen; bereits ausgefüllte Ports bleiben erhalten.
+
+## Design/Theme
+
+Jede Karte hat im Editor ganz unten ein Feld **„Design"** mit fünf Optionen:
+
+| Design | Aussehen |
+|---|---|
+| **Mushroom** (Standard) | Abgerundete, farblich getönte Icon-Container, weiche Hover-Flächen – wie in den Screenshots oben beschrieben |
+| **Vanilla (HA-Standard)** | Schlichte Icons ohne Farbtönung, Trennlinien zwischen den Zeilen – wie eine klassische HA-`entities`-Karte |
+| **Minimal** | Sehr kompakt: kleine Icons, wenig Abstand, kleinere Schrift – für dichte Dashboards |
+| **Glas** | Icon-Container mit Farbrahmen statt Farbfläche, größere Rundungen – "Glasmorphism"-Look |
+| **Benutzerdefiniert** | Schaltet zusätzliche Felder frei (siehe unten) – erscheinen **nur**, wenn "Benutzerdefiniert" ausgewählt ist |
+
+Bei **Benutzerdefiniert** erscheinen zusätzlich:
+
+- **Eckenradius Karte / Icon** (px) – Schieberegler
+- **Icon-Hintergrund gefüllt** – aus = Umriss-Look statt Farbfläche
+- **Farbe: Verbunden / Getrennt / Speed·Info / Traffic ein / Traffic aus / Warnung / Kritisch**
+  – je ein Farbwähler (Farbrad), ersetzt die Standardfarben in genau dieser Karte
+
+```yaml
+type: custom:dlink-header-card
+title: DGS-1210-10P
+port_count: 10
+theme: custom
+custom_card_radius: 20
+custom_icon_radius: 20
+custom_icon_filled: false
+custom_color_connected: [56, 142, 60]
+custom_color_disconnected: [120, 120, 120]
+custom_color_warning: [255, 179, 0]
+custom_color_critical: [211, 47, 47]
+```
+
+Das Theme gilt pro Karte – du kannst z.B. die Header-Karte in "Glas" und die Portübersicht
+in "Vanilla" anzeigen lassen.
 
 ## Voraussetzung
 
@@ -201,7 +239,26 @@ entities:
 > Hinweis: Auch hier wird direkt addiert – alle Traffic-Sensoren sollten dieselbe
 > Einheit verwenden (z.B. GB).
 
-## 6. Zusammenfassung — `dlink-switch-summary-card`
+## 6. Statistik — `dlink-stats-card`
+
+Zwei Ringdiagramme (Gauges) – Portauslastung (wie viele Ports sind verbunden) und
+optional PoE-Auslastung (nur wenn `poe_entity` **und** `max_power` gesetzt sind) – plus
+darunter die Traffic-Summe ein/aus. Ohne `max_power` erscheint statt des PoE-Gauges eine
+normale Zeile mit dem aktuellen PoE-Wert.
+
+```yaml
+type: custom:dlink-stats-card
+title: DGS-1210 Statistik
+poe_entity: sensor.dgs1210_poe_power
+max_power: 78
+port_count: 10
+entities:
+  link: binary_sensor.dgs1210_port_{port}_link
+  traffic_in: sensor.dgs1210_port_{port}_traffic_in
+  traffic_out: sensor.dgs1210_port_{port}_traffic_out
+```
+
+## 7. Zusammenfassung — `dlink-switch-summary-card`
 
 Eine schlanke Glance-Karte fürs Haupt-Dashboard: wie viele Ports verbunden sind,
 Summe des ein-/ausgehenden Traffics über alle Ports sowie PoE-Verbrauch.
