@@ -3,15 +3,22 @@
 Custom Lovelace-Karten für Home Assistant, um die Daten deiner DGS-1210-Integration
 (Port-Link, Speed, Traffic, PoE-Leistungsverbrauch) übersichtlich darzustellen.
 
+Design im Stil von [Mushroom](https://github.com/piitaya/lovelace-mushroom): abgerundete,
+farblich getönte Icon-Container statt nackter Icons, klare Primär-/Sekundärtext-Zeilen,
+weiche Hover-Flächen statt Trennlinien. Grün = verbunden/gut, Grau = getrennt, Gelb/Rot =
+Warnung/kritisch (z.B. bei PoE-Auslastung).
+
 Statt einer langen `entities`-Karte mit 40+ Zeilen (Port 1–10 × Link/Speed/Traffic
-in/out) stehen fünf verschiedene, spezialisierte Karten zur Auswahl:
+in/out) stehen sieben verschiedene, spezialisierte Karten zur Auswahl:
 
 | Karte | Typ | Wofür |
 |---|---|---|
-| Portübersicht | `dlink-switch-card` | Vollständige Tabelle aller Ports (wie bisher, aber sauberer, mit Farben & Icons) |
-| Port-Grid | `dlink-ports-grid-card` | Kompakte Kachel-Übersicht aller Ports auf einen Blick (Ampel-Farbe + Speed) |
+| Header | `dlink-header-card` | Kompakte Kopfzeile für ein Switch-Dashboard: Status-Icon (grün/gelb/rot), Titel, "X/Y Ports verbunden · Z W PoE" |
+| Portübersicht | `dlink-switch-card` | Vollständige Tabelle aller Ports mit Link, Speed und Traffic |
+| Port-Grid | `dlink-ports-grid-card` | Kompakte Chip-Übersicht aller Ports auf einen Blick (Ampel-Farbe + Speed) |
 | Einzelner Port | `dlink-port-card` | Detailkarte für einen wichtigen Port (z.B. Uplink zum Router oder NAS) |
 | PoE-Verbrauch | `dlink-poe-card` | Große Anzeige des PoE-Gesamtverbrauchs mit Auslastungsbalken |
+| Traffic gesamt | `dlink-traffic-card` | Summe von ein-/ausgehendem Traffic über alle Ports, große Zahlen |
 | Zusammenfassung | `dlink-switch-summary-card` | Glance-Karte: verbundene Ports, Traffic-Summe, PoE – ideal fürs Haupt-Dashboard |
 
 ## Installation über HACS
@@ -68,6 +75,27 @@ als Entitäten in Home Assistant bereitstellt (z.B. `binary_sensor.dgs1210_port_
 `sensor.dgs1210_port_1_speed`, `sensor.dgs1210_port_1_traffic_in`, `sensor.dgs1210_port_1_traffic_out`,
 `sensor.dgs1210_poe_power`). Da jede Integration eigene Entity-IDs vergibt, musst du
 diese einmalig in der Karten-Konfiguration eintragen (siehe unten).
+
+## Header — `dlink-header-card`
+
+Kompakte Kopfzeile für den Kopf deines Switch-Dashboards: ein Status-Icon (grün wenn
+alle konfigurierten Ports verbunden sind, gelb bei teilweise, rot wenn nichts verbunden
+bzw. PoE über der kritischen Schwelle), Titel und eine Kurzinfo-Zeile.
+
+```yaml
+type: custom:dlink-header-card
+title: DGS-1210-10P
+poe_entity: sensor.dgs1210_poe_power
+max_power: 78
+ports:
+  - port: 1
+    link: binary_sensor.dgs1210_port_1_link
+  - port: 2
+    link: binary_sensor.dgs1210_port_2_link
+```
+
+`poe_entity` und `max_power` sind optional; ohne `max_power` fließt PoE nur als Text in
+die Kurzinfo-Zeile ein, ohne die Icon-Farbe zu beeinflussen.
 
 ## 1. Portübersicht — `dlink-switch-card`
 
@@ -156,7 +184,24 @@ critical_percent: 90
 `max_power` ist optional — ohne diesen Wert wird nur die aktuelle Leistung ohne
 Balken angezeigt.
 
-## 5. Zusammenfassung — `dlink-switch-summary-card`
+## 5. Traffic gesamt — `dlink-traffic-card`
+
+Zwei große Zahlen: Summe des eingehenden und des ausgehenden Traffics über alle
+konfigurierten Ports. Gut geeignet als Kachel neben der Header-Karte.
+
+```yaml
+type: custom:dlink-traffic-card
+title: Gesamter Datenverkehr
+port_count: 10
+entities:
+  traffic_in: sensor.dgs1210_port_{port}_traffic_in
+  traffic_out: sensor.dgs1210_port_{port}_traffic_out
+```
+
+> Hinweis: Auch hier wird direkt addiert – alle Traffic-Sensoren sollten dieselbe
+> Einheit verwenden (z.B. GB).
+
+## 6. Zusammenfassung — `dlink-switch-summary-card`
 
 Eine schlanke Glance-Karte fürs Haupt-Dashboard: wie viele Ports verbunden sind,
 Summe des ein-/ausgehenden Traffics über alle Ports sowie PoE-Verbrauch.
