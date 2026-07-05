@@ -16,9 +16,14 @@
  *  - dlink-traffic-card          total traffic in/out across all ports
  *  - dlink-stats-card            gauges (port + PoE utilization) + traffic stats
  *  - dlink-switch-summary-card   glance-style summary of the whole switch
+ *
+ * Badges (add via a view's "Badges" section, not the card picker):
+ *  - dlink-poe-badge             compact pill with PoE consumption
+ *  - dlink-port-badge            compact pill with a single port's status
+ *  - dlink-ports-badge           compact pill with connected-port count
  */
 
-const CARD_VERSION = "3.0.0";
+const CARD_VERSION = "3.1.0";
 
 const DEFAULT_CONNECTED_STATES = ["on", "connected", "verbunden", "up", "true"];
 
@@ -510,6 +515,63 @@ const SHARED_STYLES = `
     font-size: 0.75rem;
     color: var(--secondary-text-color);
   }
+  .dlink-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px 6px 6px;
+    border-radius: 999px;
+    background: var(--dlink-icon-bg, rgba(158, 158, 158, 0.16));
+    cursor: pointer;
+    transition: filter 150ms ease-in-out;
+  }
+  .dlink-chip:hover {
+    filter: brightness(0.96);
+  }
+  .dlink-chip-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.4);
+    color: var(--dlink-icon-color, #616161);
+    flex-shrink: 0;
+  }
+  .dlink-chip-icon ha-icon {
+    --mdc-icon-size: 16px;
+    color: inherit;
+  }
+  .dlink-chip-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+  }
+  .dlink-chip-port {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--dlink-icon-color, #616161);
+  }
+  .dlink-chip-speed {
+    font-size: 0.72rem;
+    color: var(--primary-text-color);
+    min-height: 1em;
+  }
+  .dlink-badge-chip {
+    padding: 4px 12px 4px 4px;
+  }
+  .dlink-badge-chip .dlink-chip-icon {
+    width: 22px;
+    height: 22px;
+  }
+  .dlink-badge-text {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+  }
 `;
 
 function createInfoRow(icon, colorKey, colors) {
@@ -600,6 +662,20 @@ function createGauge(size, strokeWidth) {
       labelTextEl.textContent = label || "";
     },
   };
+}
+
+function createBadgeChip(icon, colorKey, colors) {
+  const el = document.createElement("div");
+  el.className = "dlink-chip dlink-badge-chip";
+  el.innerHTML = `
+    <span class="dlink-chip-icon"><ha-icon></ha-icon></span>
+    <span class="dlink-badge-text"></span>
+  `;
+  const iconEl = el.querySelector("ha-icon");
+  iconEl.icon = icon;
+  setIconColor(el, colorKey || "blue", colors);
+  const textEl = el.querySelector(".dlink-badge-text");
+  return { el, iconEl, textEl };
 }
 
 /* ------------------------------------------------------------------ */
@@ -871,50 +947,6 @@ class DlinkPortsGridCard extends HTMLElement {
         flex-wrap: wrap;
         gap: 8px;
         padding: 6px;
-      }
-      .dlink-chip {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 14px 6px 6px;
-        border-radius: 999px;
-        background: var(--dlink-icon-bg, rgba(158, 158, 158, 0.16));
-        cursor: pointer;
-        transition: filter 150ms ease-in-out;
-      }
-      .dlink-chip:hover {
-        filter: brightness(0.96);
-      }
-      .dlink-chip-icon {
-        width: 26px;
-        height: 26px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(255, 255, 255, 0.4);
-        color: var(--dlink-icon-color, #616161);
-        flex-shrink: 0;
-      }
-      .dlink-chip-icon ha-icon {
-        --mdc-icon-size: 16px;
-        color: inherit;
-      }
-      .dlink-chip-text {
-        display: flex;
-        flex-direction: column;
-        line-height: 1.15;
-      }
-      .dlink-chip-port {
-        font-size: 0.68rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        color: var(--dlink-icon-color, #616161);
-      }
-      .dlink-chip-speed {
-        font-size: 0.72rem;
-        color: var(--primary-text-color);
-        min-height: 1em;
       }
       ${getThemeCss(this._config)}
     `;
@@ -1602,6 +1634,161 @@ class DlinkSwitchSummaryCard extends HTMLElement {
 }
 
 /* ------------------------------------------------------------------ */
+/* Badges - small pills for the badge row at the top of a dashboard    */
+/* view (Einstellungen eines Views -> Badges). Same setConfig/hass/    */
+/* getConfigElement/getStubConfig contract as cards, registered via    */
+/* window.customBadges instead of window.customCards.                 */
+/* ------------------------------------------------------------------ */
+class DlinkPoeBadge extends HTMLElement {
+  setConfig(config) {
+    if (!config.entity) {
+      throw new Error("Bitte 'entity' (PoE-Leistungssensor) angeben.");
+    }
+    this._config = config;
+    this._colors = getThemeColors(config);
+    this._buildDom();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const stateObj = hass.states[this._config.entity];
+    if (!stateObj) {
+      this._textEl.textContent = this._config.name || "PoE: n/a";
+      setIconColor(this._chip.el, "grey", this._colors);
+      return;
+    }
+    const value = numericValue(stateObj);
+    const maxPower = this._config.max_power;
+    let colorKey = "amber";
+    if (maxPower && value != null) {
+      const percent = Math.max(0, Math.min(100, (value / maxPower) * 100));
+      const warn = this._config.warn_percent != null ? this._config.warn_percent : 70;
+      const critical = this._config.critical_percent != null ? this._config.critical_percent : 90;
+      colorKey = "green";
+      if (percent >= critical) colorKey = "red";
+      else if (percent >= warn) colorKey = "amber";
+    }
+    const prefix = this._config.name ? `${this._config.name}: ` : "";
+    this._textEl.textContent = `${prefix}${formatState(hass, stateObj)}`;
+    setIconColor(this._chip.el, colorKey, this._colors);
+  }
+
+  _buildDom() {
+    const root = this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = SHARED_STYLES + getThemeCss(this._config);
+    root.appendChild(style);
+    this._chip = createBadgeChip("mdi:flash", "amber", this._colors);
+    this._chip.el.addEventListener("click", () => fireMoreInfo(this, this._config.entity));
+    this._textEl = this._chip.textEl;
+    root.appendChild(this._chip.el);
+  }
+
+  static getStubConfig() {
+    return { entity: "sensor.dgs1210_poe_power", max_power: 78 };
+  }
+
+  static getConfigElement() {
+    return document.createElement("dlink-poe-badge-editor");
+  }
+}
+
+class DlinkPortBadge extends HTMLElement {
+  setConfig(config) {
+    if (!config.link) {
+      throw new Error("Bitte 'link' (Link-Status-Entität) angeben.");
+    }
+    this._config = config;
+    this._colors = getThemeColors(config);
+    this._buildDom();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const connectedStates = this._config.connected_states;
+    const stateObj = hass.states[this._config.link];
+    const label = this._config.name || "Port";
+    if (!stateObj) {
+      this._textEl.textContent = `${label}: n/a`;
+      this._chip.iconEl.icon = "mdi:help-circle-outline";
+      setIconColor(this._chip.el, "grey", this._colors);
+      return;
+    }
+    const connected = isConnectedState(stateObj, connectedStates);
+    const speedObj = this._config.speed ? hass.states[this._config.speed] : null;
+    const detail = connected && speedObj ? formatState(hass, speedObj) : formatState(hass, stateObj);
+    this._textEl.textContent = `${label}: ${detail}`;
+    this._chip.iconEl.icon = connected ? "mdi:lan-connect" : "mdi:lan-disconnect";
+    setIconColor(this._chip.el, connected ? "green" : "grey", this._colors);
+  }
+
+  _buildDom() {
+    const root = this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = SHARED_STYLES + getThemeCss(this._config);
+    root.appendChild(style);
+    this._chip = createBadgeChip("mdi:lan-connect", "grey", this._colors);
+    this._chip.el.addEventListener("click", () => fireMoreInfo(this, this._config.link));
+    this._textEl = this._chip.textEl;
+    root.appendChild(this._chip.el);
+  }
+
+  static getStubConfig() {
+    return { name: "Port 1", link: "binary_sensor.dgs1210_port_1_link" };
+  }
+
+  static getConfigElement() {
+    return document.createElement("dlink-port-badge-editor");
+  }
+}
+
+class DlinkPortsBadge extends HTMLElement {
+  setConfig(config) {
+    validatePortsConfig(config);
+    this._config = config;
+    this._ports = resolvePorts(config);
+    this._colors = getThemeColors(config);
+    this._buildDom();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const connectedStates = this._config.connected_states;
+    let connectedCount = 0;
+    let total = 0;
+    for (const port of this._ports) {
+      if (!port.link) continue;
+      total++;
+      const stateObj = hass.states[port.link];
+      if (stateObj && isConnectedState(stateObj, connectedStates)) connectedCount++;
+    }
+    const colorKey = total === 0 ? "grey" : connectedCount === total ? "green" : connectedCount === 0 ? "red" : "amber";
+    const prefix = this._config.title ? `${this._config.title}: ` : "";
+    this._textEl.textContent = `${prefix}${connectedCount}/${total}`;
+    setIconColor(this._chip.el, colorKey, this._colors);
+  }
+
+  _buildDom() {
+    const root = this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = SHARED_STYLES + getThemeCss(this._config);
+    root.appendChild(style);
+    this._chip = createBadgeChip("mdi:lan-connect", "grey", this._colors);
+    this._chip.el.style.cursor = "default";
+    this._textEl = this._chip.textEl;
+    root.appendChild(this._chip.el);
+  }
+
+  static getStubConfig() {
+    return { title: "Ports", port_count: 8 };
+  }
+
+  static getConfigElement() {
+    return document.createElement("dlink-ports-badge-editor");
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Simple ha-form based editors (single-entity cards)                  */
 /* ------------------------------------------------------------------ */
 class BaseFormEditor extends HTMLElement {
@@ -1979,6 +2166,55 @@ class DlinkStatsCardEditor extends DlinkTemplatedPortsEditor {
   }
 }
 
+class DlinkPoeBadgeEditor extends BaseFormEditor {
+  get schema() {
+    return [
+      { name: "name", selector: { text: {} } },
+      { name: "entity", selector: { entity: { domain: "sensor" } } },
+      { name: "max_power", selector: { number: { mode: "box", min: 0 } } },
+      { name: "warn_percent", selector: { number: { mode: "box", min: 0, max: 100 } } },
+      { name: "critical_percent", selector: { number: { mode: "box", min: 0, max: 100 } } },
+    ];
+  }
+
+  get labels() {
+    return {
+      name: "Label",
+      entity: "PoE-Leistungssensor",
+      max_power: "Maximale PoE-Leistung (W)",
+      warn_percent: "Warnschwelle (%)",
+      critical_percent: "Kritische Schwelle (%)",
+    };
+  }
+}
+
+class DlinkPortBadgeEditor extends BaseFormEditor {
+  get schema() {
+    return [
+      { name: "name", selector: { text: {} } },
+      { name: "link", selector: { entity: {} } },
+      { name: "speed", selector: { entity: { domain: "sensor" } } },
+    ];
+  }
+
+  get labels() {
+    return {
+      name: "Label",
+      link: "Link-Entität",
+      speed: "Speed-Entität (optional)",
+    };
+  }
+}
+
+class DlinkPortsBadgeEditor extends DlinkTemplatedPortsEditor {
+  constructor() {
+    super();
+    this.showPoe = false;
+    this.showTraffic = false;
+    this.showCompact = false;
+  }
+}
+
 customElements.define("dlink-poe-card-editor", DlinkPoeCardEditor);
 customElements.define("dlink-port-card-editor", DlinkPortCardEditor);
 customElements.define("dlink-switch-card-editor", DlinkSwitchCardEditor);
@@ -1987,6 +2223,9 @@ customElements.define("dlink-switch-summary-card-editor", DlinkSwitchSummaryCard
 customElements.define("dlink-header-card-editor", DlinkHeaderCardEditor);
 customElements.define("dlink-traffic-card-editor", DlinkTrafficCardEditor);
 customElements.define("dlink-stats-card-editor", DlinkStatsCardEditor);
+customElements.define("dlink-poe-badge-editor", DlinkPoeBadgeEditor);
+customElements.define("dlink-port-badge-editor", DlinkPortBadgeEditor);
+customElements.define("dlink-ports-badge-editor", DlinkPortsBadgeEditor);
 
 customElements.define("dlink-switch-card", DlinkSwitchCard);
 customElements.define("dlink-ports-grid-card", DlinkPortsGridCard);
@@ -1996,6 +2235,9 @@ customElements.define("dlink-switch-summary-card", DlinkSwitchSummaryCard);
 customElements.define("dlink-header-card", DlinkHeaderCard);
 customElements.define("dlink-traffic-card", DlinkTrafficCard);
 customElements.define("dlink-stats-card", DlinkStatsCard);
+customElements.define("dlink-poe-badge", DlinkPoeBadge);
+customElements.define("dlink-port-badge", DlinkPortBadge);
+customElements.define("dlink-ports-badge", DlinkPortsBadge);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -2045,6 +2287,28 @@ window.customCards.push(
     type: "dlink-switch-summary-card",
     name: "D-Link Switch – Zusammenfassung",
     description: "Kompakte Glance-Karte mit Portstatus, Traffic-Summe und PoE.",
+    preview: false,
+  }
+);
+
+window.customBadges = window.customBadges || [];
+window.customBadges.push(
+  {
+    type: "dlink-poe-badge",
+    name: "D-Link Switch – PoE",
+    description: "Kompaktes Badge mit PoE-Leistungsverbrauch, farbig je nach Auslastung.",
+    preview: false,
+  },
+  {
+    type: "dlink-port-badge",
+    name: "D-Link Switch – Port",
+    description: "Kompaktes Badge für den Status eines einzelnen Ports.",
+    preview: false,
+  },
+  {
+    type: "dlink-ports-badge",
+    name: "D-Link Switch – Ports",
+    description: "Kompaktes Badge mit der Anzahl verbundener Ports (z.B. 8/10).",
     preview: false,
   }
 );

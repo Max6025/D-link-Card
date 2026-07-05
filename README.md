@@ -277,6 +277,45 @@ entities:
 > Hinweis: Die Traffic-Summe geht davon aus, dass alle Traffic-Sensoren dieselbe
 > Einheit verwenden (z.B. GB), da direkt addiert wird.
 
+## Badges
+
+Zusätzlich zu den Karten gibt es drei **Badges** – die kleinen Pillen oben in einer
+Dashboard-Ansicht (neben den View-Reitern), nicht Teil des normalen Karten-Bereichs.
+
+| Badge | Typ | Wofür |
+|---|---|---|
+| PoE | `dlink-poe-badge` | Kompakte Pille mit PoE-Leistungsverbrauch, farbig nach Auslastung |
+| Port | `dlink-port-badge` | Kompakte Pille mit Status/Speed eines einzelnen Ports |
+| Ports | `dlink-ports-badge` | Kompakte Pille mit Anzahl verbundener Ports (z.B. "8/10") |
+
+**Einrichtung über die UI:** Dashboard bearbeiten → oben auf **„Badges hinzufügen"**
+(bzw. Zahnrad der Ansicht → Badges) → in der Liste nach **„D-Link Switch"** suchen →
+Badge auswählen → Felder ausfüllen (Entity-Picker, wie bei den Karten) → Speichern.
+
+Per YAML:
+
+```yaml
+# Beispiel Dashboard-/View-Konfiguration
+views:
+  - title: Netzwerk
+    badges:
+      - type: custom:dlink-poe-badge
+        name: PoE
+        entity: sensor.dgs1210_poe_power
+        max_power: 78
+      - type: custom:dlink-ports-badge
+        title: Ports
+        port_count: 10
+        entities:
+          link: binary_sensor.dgs1210_port_{port}_link
+      - type: custom:dlink-port-badge
+        name: Uplink
+        link: binary_sensor.dgs1210_port_1_link
+        speed: sensor.dgs1210_port_1_speed
+    cards:
+      # ...
+```
+
 ## Gemeinsame Optionen
 
 Alle Karten mit Port-Liste unterstützen zusätzlich:
