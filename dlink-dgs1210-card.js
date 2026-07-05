@@ -11,7 +11,7 @@
  *  - dlink-switch-summary-card   glance-style summary of the whole switch
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.1.0";
 
 const DEFAULT_CONNECTED_STATES = ["on", "connected", "verbunden", "up", "true"];
 
@@ -306,6 +306,10 @@ class DlinkSwitchCard extends HTMLElement {
       },
     };
   }
+
+  static getConfigElement() {
+    return document.createElement("dlink-switch-card-editor");
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -418,6 +422,10 @@ class DlinkPortsGridCard extends HTMLElement {
 
   static getStubConfig(hass) {
     return DlinkSwitchCard.getStubConfig(hass);
+  }
+
+  static getConfigElement() {
+    return document.createElement("dlink-ports-grid-card-editor");
   }
 }
 
@@ -809,6 +817,10 @@ class DlinkSwitchSummaryCard extends HTMLElement {
       },
     };
   }
+
+  static getConfigElement() {
+    return document.createElement("dlink-switch-summary-card-editor");
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -896,8 +908,174 @@ class DlinkPortCardEditor extends BaseFormEditor {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Hand-built editor for the "templated ports" cards                   */
+/* (dlink-switch-card, dlink-ports-grid-card, dlink-switch-summary-card)*/
+/* Builds its DOM once and never rebuilds on config round-trips, so    */
+/* focus/caret position in text fields is preserved while typing.      */
+/* ------------------------------------------------------------------ */
+class DlinkTemplatedPortsEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    if (!this._built) {
+      this._built = true;
+      this._render();
+    }
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._entityPickers) {
+      for (const picker of this._entityPickers) picker.hass = hass;
+    }
+  }
+
+  _getValue(path) {
+    if (path.indexOf(".") !== -1) {
+      const [group, key] = path.split(".");
+      return this._config[group] ? this._config[group][key] : undefined;
+    }
+    return this._config[path];
+  }
+
+  _updateConfig(path, value) {
+    const newConfig = { ...this._config };
+    if (path.indexOf(".") !== -1) {
+      const [group, key] = path.split(".");
+      newConfig[group] = { ...(newConfig[group] || {}), [key]: value };
+    } else {
+      newConfig[path] = value;
+    }
+    this._config = newConfig;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: newConfig } }));
+  }
+
+  _render() {
+    const root = this.shadowRoot || this.attachShadow({ mode: "open" });
+    root.innerHTML = "";
+    const style = document.createElement("style");
+    style.textContent = `
+      .wrap { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+      ha-textfield, ha-entity-picker { width: 100%; display: block; }
+      .switch-row { display: flex; align-items: center; justify-content: space-between; }
+      .hint { font-size: 0.75rem; color: var(--secondary-text-color); margin-top: 2px; }
+      .note { font-size: 0.75rem; color: var(--secondary-text-color); }
+    `;
+    root.appendChild(style);
+
+    const wrap = document.createElement("div");
+    wrap.className = "wrap";
+    root.appendChild(wrap);
+
+    this._entityPickers = [];
+
+    const addText = (label, path, hint, type) => {
+      const box = document.createElement("div");
+      const field = document.createElement("ha-textfield");
+      field.label = label;
+      if (type) field.type = type;
+      const current = this._getValue(path);
+      field.value = current != null ? String(current) : "";
+      field.addEventListener("input", () => {
+        if (type === "number") {
+          const n = parseInt(field.value, 10);
+          this._updateConfig(path, Number.isNaN(n) ? undefined : n);
+        } else {
+          this._updateConfig(path, field.value);
+        }
+      });
+      box.appendChild(field);
+      if (hint) {
+        const hintEl = document.createElement("div");
+        hintEl.className = "hint";
+        hintEl.textContent = hint;
+        box.appendChild(hintEl);
+      }
+      wrap.appendChild(box);
+    };
+
+    const addEntityPicker = (label, path, domain) => {
+      const picker = document.createElement("ha-entity-picker");
+      picker.hass = this._hass;
+      picker.label = label;
+      picker.value = this._getValue(path) || "";
+      if (domain) picker.includeDomains = [domain];
+      picker.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        this._updateConfig(path, ev.detail.value);
+      });
+      wrap.appendChild(picker);
+      this._entityPickers.push(picker);
+    };
+
+    const addSwitch = (label, path) => {
+      const row = document.createElement("div");
+      row.className = "switch-row";
+      const span = document.createElement("span");
+      span.textContent = label;
+      const sw = document.createElement("ha-switch");
+      sw.checked = !!this._getValue(path);
+      sw.addEventListener("change", () => this._updateConfig(path, sw.checked));
+      row.appendChild(span);
+      row.appendChild(sw);
+      wrap.appendChild(row);
+    };
+
+    addText("Titel", "title");
+    if (this.showPoe) addEntityPicker("PoE-Leistungssensor", "poe_entity", "sensor");
+    addText("Anzahl Ports", "port_count", "z.B. 10 bei einer DGS-1210-10P", "number");
+    addText(
+      "Link-Entity-Vorlage",
+      "entities.link",
+      "{port} wird durch die Portnummer ersetzt, z.B. binary_sensor.dgs1210_port_{port}_link"
+    );
+    addText("Speed-Entity-Vorlage", "entities.speed", "z.B. sensor.dgs1210_port_{port}_speed");
+    if (this.showTraffic) {
+      addText("Traffic-in-Entity-Vorlage", "entities.traffic_in", "z.B. sensor.dgs1210_port_{port}_traffic_in");
+      addText("Traffic-out-Entity-Vorlage", "entities.traffic_out", "z.B. sensor.dgs1210_port_{port}_traffic_out");
+    }
+    if (this.showCompact) addSwitch("Kompakt (ohne Traffic-Zeilen)", "compact");
+
+    const note = document.createElement("div");
+    note.className = "note";
+    note.textContent =
+      "Für individuelle Portnamen oder Entity-IDs ohne einheitliches Muster: im YAML-Editor eine explizite 'ports:'-Liste verwenden (siehe README).";
+    wrap.appendChild(note);
+  }
+}
+
+class DlinkSwitchCardEditor extends DlinkTemplatedPortsEditor {
+  constructor() {
+    super();
+    this.showPoe = true;
+    this.showTraffic = true;
+    this.showCompact = true;
+  }
+}
+
+class DlinkPortsGridCardEditor extends DlinkTemplatedPortsEditor {
+  constructor() {
+    super();
+    this.showPoe = false;
+    this.showTraffic = false;
+    this.showCompact = false;
+  }
+}
+
+class DlinkSwitchSummaryCardEditor extends DlinkTemplatedPortsEditor {
+  constructor() {
+    super();
+    this.showPoe = true;
+    this.showTraffic = true;
+    this.showCompact = false;
+  }
+}
+
 customElements.define("dlink-poe-card-editor", DlinkPoeCardEditor);
 customElements.define("dlink-port-card-editor", DlinkPortCardEditor);
+customElements.define("dlink-switch-card-editor", DlinkSwitchCardEditor);
+customElements.define("dlink-ports-grid-card-editor", DlinkPortsGridCardEditor);
+customElements.define("dlink-switch-summary-card-editor", DlinkSwitchSummaryCardEditor);
 
 customElements.define("dlink-switch-card", DlinkSwitchCard);
 customElements.define("dlink-ports-grid-card", DlinkPortsGridCard);

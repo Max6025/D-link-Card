@@ -32,6 +32,30 @@ URL: /hacsfiles/dlink-dgs1210-card/dlink-dgs1210-card.js
 Typ: JavaScript-Modul
 ```
 
+## Einrichtung über die UI (ohne YAML)
+
+Alle fünf Karten haben einen grafischen Editor. So richtest du sie über die Oberfläche ein:
+
+1. Dashboard bearbeiten (Stift-Symbol oben rechts) → **+ Karte hinzufügen**.
+2. Ganz unten in der Liste nach **„D-Link Switch"** suchen – alle 5 Karten erscheinen dort
+   mit Name und Beschreibung.
+3. Karte auswählen → es öffnet sich der Editor mit Eingabefeldern statt YAML.
+4. Felder ausfüllen:
+   - **PoE-Leistungssensor** / **Link-/Speed-Entität** etc.: Entity-Picker, einfach die
+     passende Entität deiner Integration auswählen bzw. antippen und suchen.
+   - **Link-Entity-Vorlage** / **Speed-Entity-Vorlage** (bei Portübersicht, Port-Grid,
+     Zusammenfassung): hier `{port}` als Platzhalter für die Portnummer eintragen,
+     z.B. `binary_sensor.dgs1210_port_{port}_link`. Am einfachsten findest du das Muster,
+     indem du dir in **Entwicklerwerkzeuge → Zustände** eine der Port-Entitäten ansiehst.
+   - **Anzahl Ports**: z.B. `10` bei einer DGS-1210-10P.
+5. Speichern – fertig, kein YAML nötig.
+
+Die Vorlagen-Editoren (Portübersicht, Port-Grid, Zusammenfassung) decken den Standardfall
+ab, bei dem alle Ports demselben Entity-Namensmuster folgen. Wenn deine Ports individuelle
+Namen/Entity-IDs ohne einheitliches Muster haben, wechsle im Karten-Editor oben rechts auf
+**„Als YAML bearbeiten"** und nutze dort eine explizite `ports:`-Liste (siehe Abschnitt
+„Portübersicht" weiter unten).
+
 ## Voraussetzung
 
 Diese Karten zeigen nur Daten an, die deine bestehende DGS-1210-Integration bereits
